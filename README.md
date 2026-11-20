@@ -48,3 +48,12 @@ Source code: [`src/MuseStatusExporter`](src/MuseStatusExporter)
 - `pluginmaster.json` — the repository index Dalamud reads
 - `plugins/<InternalName>/latest.zip` — the installable plugin package
 - `src/` — plugin source code
+
+## Companion uploader (uploader/)
+
+The `uploader/` folder holds the Windows PowerShell uploader that pairs
+with Muse Status Exporter: it pushes the plugin's per-character status
+JSON files, tell records and plugin config snapshots to Google Drive,
+and delivers configuration files sent by Muse back to the plugin.
+See `uploader/README.md` for setup. No credentials are stored in these
+scripts (the Google refresh token stays in a DPAPI-encrypted local file).
