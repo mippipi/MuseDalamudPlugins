@@ -65,5 +65,11 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Print in-game chat notifications (venture completion, buddy level-up ready, new GC list).</summary>
     public bool InGameAlerts { get; set; } = true;
 
+    /// <summary>Print a one-time summary (GC supply shortage, next venture completion, weekly tomestone) to the chat log on login.</summary>
+    public bool LoginSummary { get; set; } = true;
+
+    /// <summary>Show each known house's days since last entry and demolition date on login, with a warning when demolition is near.</summary>
+    public bool HousingDeadlineNotice { get; set; } = true;
+
     public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
 }

@@ -65,6 +65,10 @@ public sealed class ConfigWindow : Window
             () => configuration.ExportRetainerMarket, v => configuration.ExportRetainerMarket = v);
         DrawCheckbox("ゲーム内通知（ベンチャー完了・バディ・GC新リスト）",
             () => configuration.InGameAlerts, v => configuration.InGameAlerts = v);
+        DrawCheckbox("ログイン時にサマリーを表示する（GC軍需品・ベンチャー・週間トームストーン）",
+            () => configuration.LoginSummary, v => configuration.LoginSummary = v);
+        DrawCheckbox("ログイン時にハウスの入室期限を表示する（撤去予定日が近い場合は警告）",
+            () => configuration.HousingDeadlineNotice, v => configuration.HousingDeadlineNotice = v);
     }
 
     private void DrawCheckbox(string label, Func<bool> get, Action<bool> set)

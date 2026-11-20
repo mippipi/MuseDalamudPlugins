@@ -174,6 +174,20 @@ namespace MuseStatusExporter;
 /// so each event is announced once. PlayTime and GcAgentProbe are kept
 /// out of the change-detection payload: both change on every read, so
 /// including them would rewrite the status file on every tick.
+/// Since v1.15.0 the plugin prints a one-time login summary to the chat
+/// log (Grand Company supply shortage counted against the inventory,
+/// the soonest retainer venture completion, and the weekly tomestone
+/// remainder), and it tracks the player's known houses in a store
+/// shared by all characters ("mstatus-housing-known.json"): whenever a
+/// recorded housing visit matches a known house, that house's last
+/// entry time is updated. The snapshot carries the derived state as
+/// "KnownHouses" (days since the last entry, the demolition date 45
+/// days after it, and the days left), and the login summary shows one
+/// line per known house, with a warning once 7 or fewer days remain.
+/// The store is seeded with the owner-confirmed baseline that all
+/// three houses were last entered on 2026-10-31. KnownHouses is kept
+/// out of the change-detection payload for the same reason as PlayTime:
+/// the day counters change on their own.
 /// </summary>
 public sealed class Plugin : IDalamudPlugin
 {
@@ -309,6 +323,38 @@ public sealed class Plugin : IDalamudPlugin
     private readonly object alertLock = new();
     private readonly Dictionary<string, AlertStateFile> alertStateByCharacter = new();
 
+    // Login summary and known houses (v1.15.0). The summary is printed
+    // once per login, after the first snapshot of the session exists.
+    // The known-house store is shared by every character (and service
+    // account) on this machine, because the houses belong to the player,
+    // not to the character that happens to visit them.
+    private bool loginSummaryPending;
+    private DateTime loginSummaryRequestedUtc = DateTime.MinValue;
+    private Snapshot? lastBuiltSnapshot;
+    private readonly object knownHousingLock = new();
+    private KnownHousesFile? knownHousesCache;
+
+    private sealed record KnownHouseDef(string World, int Ward, int Plot, string Kind);
+
+    // The player's houses, with the ward / plot numbers as displayed in
+    // game (1-based). Recorded visits carry the raw HousingManager
+    // values, whose base (0 or 1) is not pinned down, so matching
+    // accepts the displayed number and the displayed number minus one.
+    private static readonly KnownHouseDef[] KnownHouseDefs =
+    [
+        new("Ramuh", 22, 42, "FCハウス"),
+        new("Ixion", 5, 40, "個人ハウス"),
+        new("Fenrir", 22, 37, "FCハウス"),
+    ];
+
+    private const int HousingDemolitionDays = 45;
+    private const int HousingWarningDays = 7;
+
+    // Owner-confirmed baseline: all three houses were last entered on
+    // this date (stated by the owner on 2026-10-31). Used only to seed
+    // a fresh known-house store; real visits replace it.
+    private const string HousingBaselineEntryAt = "2026-10-31T00:00:00+09:00";
+
     // Shared FATE progress through achievement requests (v1.12.2), the
     // design Auto FATE Grind uses: every shared-FATE zone's completed
     // count is backed by a hidden achievement, so the plugin asks the
@@ -405,6 +451,14 @@ public sealed class Plugin : IDalamudPlugin
         // plugin's requests. Failing to hook only disables this capture
         // path; the AgentFateProgress read keeps working as before.
         SetupAchievementProgressHook();
+
+        // A plugin (re)load while already logged in never sees OnLogin,
+        // so request the login summary here as well (v1.15.0).
+        if (ClientState.IsLoggedIn)
+        {
+            loginSummaryPending = true;
+            loginSummaryRequestedUtc = DateTime.UtcNow;
+        }
     }
 
     private unsafe void SetupAchievementProgressHook()
@@ -467,10 +521,20 @@ public sealed class Plugin : IDalamudPlugin
             playSessionCharacter = string.Empty;
             playSessionWorld = string.Empty;
         }
+
+        // Ask for the one-time login summary (v1.15.0); it is printed by
+        // the framework tick once the session's first snapshot exists.
+        loginSummaryPending = true;
+        loginSummaryRequestedUtc = DateTime.UtcNow;
+        lastBuiltSnapshot = null;
     }
 
     private void OnLogout(int type, int code)
     {
+        // A pending login summary belongs to the ending session (v1.15.0).
+        loginSummaryPending = false;
+        lastBuiltSnapshot = null;
+
         // Settle the play time of the ending session (v1.14.0).
         AccountPlayTimeFinal();
 
@@ -490,6 +554,22 @@ public sealed class Plugin : IDalamudPlugin
         {
             configSync.Tick();
             ChatGui.Print($"[Muse Status Exporter] Config sync: {configSync.DescribeState()}");
+            return;
+        }
+
+        if (args.Trim().Equals("summary", StringComparison.OrdinalIgnoreCase))
+        {
+            Snapshot? snapshot = null;
+            try
+            {
+                snapshot = BuildSnapshot();
+            }
+            catch (Exception ex)
+            {
+                Log.Error(ex, "Failed to read character status for the summary command.");
+            }
+
+            PrintSummary(snapshot, "[Muse Status Exporter] サマリー");
             return;
         }
 
@@ -635,6 +715,7 @@ public sealed class Plugin : IDalamudPlugin
 
         TryExport(force: false);
         CheckAlerts();
+        TryPrintLoginSummary();
     }
 
     /// <summary>
@@ -1383,6 +1464,9 @@ public sealed class Plugin : IDalamudPlugin
         if (snapshot == null)
             return false;
 
+        // The login summary reads the session's first snapshot (v1.15.0).
+        lastBuiltSnapshot = snapshot;
+
         var payloadJson = JsonSerializer.Serialize(new Payload(snapshot), JsonOptions);
         var now = DateTime.UtcNow;
         var changed = payloadJson != lastPayloadJson;
@@ -1647,7 +1731,10 @@ public sealed class Plugin : IDalamudPlugin
         try
         {
             if (configuration.RecordHousingVisits)
+            {
                 snapshot.HousingVisits = UpdateHousingVisits(snapshot.Character, snapshot.World);
+                snapshot.KnownHouses = BuildKnownHouseStatuses();
+            }
         }
         catch (Exception ex)
         {
@@ -2952,6 +3039,7 @@ public sealed class Plugin : IDalamudPlugin
                     if (visits.Count > MaxHousingVisitEntries)
                         visits.RemoveRange(0, visits.Count - MaxHousingVisitEntries);
                     SaveHousingVisits(character, world, visits);
+                    UpdateKnownHouseFromVisit(current);
                 }
             }
 
@@ -3034,6 +3122,267 @@ public sealed class Plugin : IDalamudPlugin
         {
             Log.Warning(ex, "Failed to save housing visit history.");
         }
+    }
+
+    // ---- Known houses and the login summary (v1.15.0) ---------------------
+
+    private string GetKnownHousesPath()
+        => Path.Combine(configDirectory, "mstatus-housing-known.json");
+
+    private KnownHousesFile LoadKnownHouses()
+    {
+        lock (knownHousingLock)
+        {
+            if (knownHousesCache != null)
+                return knownHousesCache;
+
+            var file = new KnownHousesFile();
+            try
+            {
+                var path = GetKnownHousesPath();
+                if (File.Exists(path))
+                    file = JsonSerializer.Deserialize<KnownHousesFile>(File.ReadAllText(path)) ?? file;
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to load the known-house store.");
+            }
+
+            // Make sure every known house is present; a house seen for
+            // the first time starts from the owner-confirmed baseline.
+            var changed = false;
+            foreach (var def in KnownHouseDefs)
+            {
+                if (file.Houses.Any(h => h.World == def.World && h.Ward == def.Ward && h.Plot == def.Plot))
+                    continue;
+                file.Houses.Add(new KnownHouseState
+                {
+                    World = def.World,
+                    Ward = def.Ward,
+                    Plot = def.Plot,
+                    Kind = def.Kind,
+                    LastEntryAt = HousingBaselineEntryAt,
+                    Seeded = true,
+                });
+                changed = true;
+            }
+
+            knownHousesCache = file;
+            if (changed)
+                SaveKnownHouses(file);
+            return file;
+        }
+    }
+
+    private void SaveKnownHouses(KnownHousesFile file)
+    {
+        try
+        {
+            var json = JsonSerializer.Serialize(file, JsonOptions);
+            var path = GetKnownHousesPath();
+            var tmpPath = path + ".tmp";
+            File.WriteAllText(tmpPath, json);
+            if (File.Exists(path))
+                File.Replace(tmpPath, path, null);
+            else
+                File.Move(tmpPath, path);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to save the known-house store.");
+        }
+    }
+
+    /// <summary>
+    /// When a recorded visit matches a known house, that house's last
+    /// entry becomes the visit time. The visit carries the raw
+    /// HousingManager ward / plot, whose base (0 or 1) is not pinned
+    /// down, so both the displayed number and the displayed number
+    /// minus one are accepted.
+    /// </summary>
+    private void UpdateKnownHouseFromVisit(HousingVisitEntry visit)
+    {
+        var def = KnownHouseDefs.FirstOrDefault(d =>
+            d.World == visit.World
+            && (visit.Ward == d.Ward || visit.Ward == d.Ward - 1)
+            && (visit.Plot == d.Plot || visit.Plot == d.Plot - 1));
+        if (def == null)
+            return;
+
+        lock (knownHousingLock)
+        {
+            var file = LoadKnownHouses();
+            var entry = file.Houses.First(h => h.World == def.World && h.Ward == def.Ward && h.Plot == def.Plot);
+            entry.LastEntryAt = visit.At;
+            entry.Seeded = false;
+            SaveKnownHouses(file);
+        }
+    }
+
+    private List<KnownHouseStatusEntry> BuildKnownHouseStatuses()
+    {
+        var file = LoadKnownHouses();
+        var today = DateTime.Today;
+        var result = new List<KnownHouseStatusEntry>();
+        foreach (var def in KnownHouseDefs)
+        {
+            var status = new KnownHouseStatusEntry
+            {
+                World = def.World,
+                Ward = def.Ward,
+                Plot = def.Plot,
+                Kind = def.Kind,
+            };
+            var entry = file.Houses.FirstOrDefault(h => h.World == def.World && h.Ward == def.Ward && h.Plot == def.Plot);
+            if (entry?.LastEntryAt != null && DateTimeOffset.TryParse(entry.LastEntryAt, out var lastEntry))
+            {
+                var lastDate = lastEntry.Date;
+                var demolition = lastDate.AddDays(HousingDemolitionDays);
+                status.LastEntryAt = entry.LastEntryAt;
+                status.DaysSinceEntry = Math.Max(0, (today - lastDate).Days);
+                status.DemolitionDate = demolition.ToString("yyyy-MM-dd");
+                status.DaysUntilDemolition = (demolition - today).Days;
+            }
+            result.Add(status);
+        }
+        return result;
+    }
+
+    private void TryPrintLoginSummary()
+    {
+        if (!loginSummaryPending)
+            return;
+        if (!configuration.LoginSummary && !configuration.HousingDeadlineNotice)
+        {
+            loginSummaryPending = false;
+            return;
+        }
+
+        // Wait for the session's first snapshot so the supply / venture /
+        // tomestone lines have data; after three minutes, print whatever
+        // is available (the housing lines always are).
+        var snapshot = lastBuiltSnapshot;
+        if (snapshot == null && configuration.LoginSummary
+            && DateTime.UtcNow - loginSummaryRequestedUtc < TimeSpan.FromMinutes(3))
+            return;
+
+        loginSummaryPending = false;
+        PrintSummary(snapshot, "[Muse Status Exporter] ログインサマリー");
+    }
+
+    private void PrintSummary(Snapshot? snapshot, string header)
+    {
+        var lines = new List<string>();
+        if (configuration.LoginSummary && snapshot != null)
+            lines.AddRange(BuildStatusSummaryLines(snapshot));
+        if (configuration.HousingDeadlineNotice)
+            lines.AddRange(BuildHousingSummaryLines());
+
+        if (lines.Count == 0)
+            return;
+
+        ChatGui.Print(header);
+        foreach (var line in lines)
+            ChatGui.Print(line);
+    }
+
+    private List<string> BuildStatusSummaryLines(Snapshot snapshot)
+    {
+        var lines = new List<string>();
+
+        // Grand Company supply: the shortage is counted against
+        // everything the character carries (bags, armoury chest,
+        // equipped), HQ and NQ combined - the same rule Muse applies.
+        if (snapshot.GrandCompanySupply != null)
+        {
+            var supply = snapshot.GrandCompanySupply.Supply;
+            if (supply.Count == 0)
+            {
+                lines.Add("GC軍需品: 未取得です（コンテンツ情報「調達任務期限」の詳細を開くと取得されます）");
+            }
+            else
+            {
+                var owned = new Dictionary<uint, int>();
+                foreach (var container in snapshot.Inventory)
+                    foreach (var item in container.Items)
+                        owned[item.ItemId] = owned.GetValueOrDefault(item.ItemId) + item.Count;
+                if (snapshot.Equipped != null)
+                    foreach (var item in snapshot.Equipped.Items)
+                        owned[item.ItemId] = owned.GetValueOrDefault(item.ItemId) + 1;
+
+                var shortage = supply.Count(item => owned.GetValueOrDefault(item.ItemId) < item.NumRequested);
+                lines.Add(shortage > 0
+                    ? $"GC軍需品: 不足 {shortage} 件 / 全 {supply.Count} 件"
+                    : "GC軍需品: 全て所持済みです");
+            }
+        }
+
+        // Retainer ventures: completed ones first, otherwise the
+        // soonest completion.
+        var now = DateTimeOffset.Now;
+        var completed = 0;
+        RetainerEntry? soonest = null;
+        var soonestAt = DateTimeOffset.MaxValue;
+        foreach (var retainer in snapshot.Retainers)
+        {
+            if (retainer.VentureId == 0 || retainer.VentureCompleteAt == null)
+                continue;
+            if (!DateTimeOffset.TryParse(retainer.VentureCompleteAt, out var completeAt))
+                continue;
+            if (completeAt <= now)
+                completed++;
+            else if (completeAt < soonestAt)
+            {
+                soonestAt = completeAt;
+                soonest = retainer;
+            }
+        }
+
+        if (completed > 0)
+            lines.Add($"ベンチャー: 完了済みが {completed} 件あります");
+        else if (soonest != null)
+            lines.Add($"ベンチャー: 最短は「{soonest.Name}」で {soonestAt:M/d HH:mm} 完了（あと{FormatRemaining(soonestAt - now)}）");
+
+        // Weekly limited tomestone.
+        if (snapshot.WeeklyTomestone != null)
+        {
+            var remaining = snapshot.WeeklyTomestone.Limit - snapshot.WeeklyTomestone.Acquired;
+            lines.Add(remaining > 0
+                ? $"週間トームストーン: {snapshot.WeeklyTomestone.Acquired} / {snapshot.WeeklyTomestone.Limit}（残り {remaining}）"
+                : $"週間トームストーン: {snapshot.WeeklyTomestone.Acquired} / {snapshot.WeeklyTomestone.Limit}（上限に達しています）");
+        }
+
+        return lines;
+    }
+
+    private List<string> BuildHousingSummaryLines()
+    {
+        var lines = new List<string>();
+        foreach (var house in BuildKnownHouseStatuses())
+        {
+            var place = $"ハウス {house.World} 第{house.Ward}区{house.Plot}番地（{house.Kind}）";
+            if (house.DaysSinceEntry == null || house.DemolitionDate == null || house.DaysUntilDemolition == null)
+            {
+                lines.Add($"{place}: 入室記録がありません");
+                continue;
+            }
+
+            lines.Add($"{place}: 最終入室から {house.DaysSinceEntry} 日、撤去予定日 {house.DemolitionDate}（あと {house.DaysUntilDemolition} 日）");
+            if (house.DaysUntilDemolition < 0)
+                lines.Add($"【警告】{place} は撤去予定日（{house.DemolitionDate}）を過ぎています");
+            else if (house.DaysUntilDemolition <= HousingWarningDays)
+                lines.Add($"【警告】{place} の撤去予定日まであと {house.DaysUntilDemolition} 日です（{house.DemolitionDate}）");
+        }
+        return lines;
+    }
+
+    private static string FormatRemaining(TimeSpan span)
+    {
+        if (span.TotalDays >= 1)
+            return $"約 {(int)span.TotalDays} 日 {span.Hours} 時間";
+        if (span.TotalHours >= 1)
+            return $"約 {span.Hours} 時間 {span.Minutes} 分";
+        return $"約 {Math.Max(1, span.Minutes)} 分";
     }
 
     /// <summary>
@@ -3178,6 +3527,8 @@ public sealed class Plugin : IDalamudPlugin
         // probe carries a read timestamp), so including them would
         // rewrite the status file on every tick. They ride along on
         // writes triggered by other changes and on the heartbeat.
+        // KnownHouses is excluded for the same reason (its day counters
+        // advance on their own).
     }
 
     public sealed class Snapshot
@@ -3202,6 +3553,7 @@ public sealed class Plugin : IDalamudPlugin
         public GrandCompanySupplyData? GrandCompanySupply { get; set; }
         public GcCaptureDebugData? GcWindowDebug { get; set; }
         public List<HousingVisitEntry> HousingVisits { get; set; } = [];
+        public List<KnownHouseStatusEntry> KnownHouses { get; set; } = [];
         public WeeklyTomestoneData? WeeklyTomestone { get; set; }
         public RouletteCompletionData? RouletteCompletion { get; set; }
         public PlayTimeData? PlayTime { get; set; }
@@ -3434,6 +3786,33 @@ public sealed class Plugin : IDalamudPlugin
         public string Character { get; set; } = string.Empty;
         public string World { get; set; } = string.Empty;
         public List<HousingVisitEntry> Visits { get; set; } = [];
+    }
+
+    public sealed class KnownHousesFile
+    {
+        public List<KnownHouseState> Houses { get; set; } = [];
+    }
+
+    public sealed class KnownHouseState
+    {
+        public string World { get; set; } = string.Empty;
+        public int Ward { get; set; }
+        public int Plot { get; set; }
+        public string Kind { get; set; } = string.Empty;
+        public string? LastEntryAt { get; set; }
+        public bool Seeded { get; set; }
+    }
+
+    public sealed class KnownHouseStatusEntry
+    {
+        public string World { get; set; } = string.Empty;
+        public int Ward { get; set; }
+        public int Plot { get; set; }
+        public string Kind { get; set; } = string.Empty;
+        public string? LastEntryAt { get; set; }
+        public int? DaysSinceEntry { get; set; }
+        public string? DemolitionDate { get; set; }
+        public int? DaysUntilDemolition { get; set; }
     }
 
     public sealed class HousingVisitEntry

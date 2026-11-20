@@ -36,13 +36,14 @@ FFXIV の Dalamud 用カスタムプラグイン リポジトリです。プラ�
 - 通貨、インベントリ、リテイナーのベンチャー状態
 - GC軍需品／調達品のリクエスト（アドオンの AtkValues から取得）
 - ハウスへの入室履歴
+- 既知のハウスの最終入室日と撤去予定日（最終入室の45日後）
 - メインクエストの進行状況
 - 全18エリアの共有FATE達成度（Auto FATE Grind と同じ方式でサーバーへ能動取得するため、FATEウィンドウを開く必要はありません）
 - バディ（チョコボ）のランクと経験値、レベルアップ可能かどうかの判定
 - 週間トームストーンの取得状況、コンテンツルーレットの消化状況、プレイ時間
 - リテイナーの出品数と、開いたリテイナーの出品リスト（単価つき）
 
-そのほか、受信した `/tell` の記録、付属アップローダーを経由して届くプラグイン設定ファイルの適用（設定ダウンリンク: 検証・バックアップ・期待ハッシュ照合・プラグイン再読み込みつき）、レベルキャップ未満の戦闘ジョブ使用時のハルオーネイヤリング（経験値+30%、Lv1〜100）の自動装備、ベンチャー完了やバディのレベルアップ可能化などを知らせるゲーム内通知を行います。すべての機能はプラグインの設定ウィンドウで個別にオン／オフできます。
+そのほか、受信した `/tell` の記録、付属アップローダーを経由して届くプラグイン設定ファイルの適用（設定ダウンリンク: 検証・バックアップ・期待ハッシュ照合・プラグイン再読み込みつき）、レベルキャップ未満の戦闘ジョブ使用時のハルオーネイヤリング（経験値+30%、Lv1〜100）の自動装備、ベンチャー完了やバディのレベルアップ可能化などを知らせるゲーム内通知、ログイン時のサマリー表示（GC軍需品の不足件数・ベンチャーの完了見込み・週間トームストーンの残り・各ハウスの最終入室からの経過日数と撤去予定日。撤去予定日まで7日を切ると警告）を行います。すべての機能はプラグインの設定ウィンドウで個別にオン／オフできます。
 
 ソースコード: [`src/MuseStatusExporter`](src/MuseStatusExporter)
 
@@ -95,6 +96,7 @@ plugin's config folder:
 - Currencies, inventory containers, retainer venture state
 - Grand Company supply/provisioning requests (read from the addons' AtkValues)
 - Housing visit history
+- Last entry and demolition date (45 days after the last entry) of the known houses
 - Main scenario quest progress
 - Shared FATE progress for all 18 zones (requested from the server,
   Auto FATE Grind style — no need to open the FATE window)
@@ -106,7 +108,7 @@ It also records incoming `/tell` messages, applies plugin configuration
 files delivered through a companion uploader (config downlink, with
 validation, backups, an expected-hash guard and plugin reload), and keeps
 the Halone Earring (EXP +30%, levels 1–100) equipped while a battle
-class/job below the level cap is active. It also prints in-game chat notifications when a retainer venture completes, when the buddy becomes ready to level up, and when a new daily GC supply list is captured. Every feature has its own
+class/job below the level cap is active. It also prints in-game chat notifications when a retainer venture completes, when the buddy becomes ready to level up, and when a new daily GC supply list is captured, plus a one-time login summary (GC supply shortage, the soonest venture completion, the weekly tomestone remainder, and each known house's days since last entry and demolition date, with a warning once 7 or fewer days remain). Every feature has its own
 checkbox in the plugin's settings window.
 
 Source code: [`src/MuseStatusExporter`](src/MuseStatusExporter)

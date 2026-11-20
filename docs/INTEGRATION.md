@@ -70,6 +70,7 @@ This document describes everything another plugin or tool needs to connect to th
 | `GrandCompanySupply` | object? | GC軍需品／調達品のリクエスト |
 | `GcWindowDebug` | object? | GC取得のデバッグ情報（読み手は無視してよい） |
 | `HousingVisits` | array | 自分のハウスへの入室履歴 |
+| `KnownHouses` | array | 既知のハウスの最終入室と撤去予定日（v1.15.0 以降） |
 | `MainScenario` | object? | メインクエスト進行 |
 | `FateProgress` | array | 共有FATE達成度（全18エリア） |
 | `Buddy` | object? | バディ（チョコボ）の状態 |
@@ -90,6 +91,7 @@ This document describes everything another plugin or tool needs to connect to th
 - `Retainers[]`: `{ Name, ClassJob, Level, Gil, ItemCount, VentureId, VentureCompleteAt, MarketItemCount, MarketExpireAt }`（ベンチャー未出発時は VentureId = 0。MarketItemCount / MarketExpireAt は v1.14.0 以降）
 - `GrandCompanySupply`: `{ Supply, Provisioning }`、各要素 `{ ItemId, Name, NumRequested }`（その日のリクエスト。当日分が未取得の間は前回取得分が残る）
 - `HousingVisits[]`: `{ At, World, Kind, Ward, Plot, Room }`（Ward / Plot はプラグイン内部の生値で、表示上の区・番地と 1 ずれる場合がある）
+- `KnownHouses[]`: `{ World, Ward, Plot, Kind, LastEntryAt, DaysSinceEntry, DemolitionDate, DaysUntilDemolition }`（Ward / Plot は表示上の番号。DemolitionDate は最終入室の45日後、DaysUntilDemolition は撤去予定日までの残り日数。最終入室が未記録の場合は LastEntryAt 以外の各値が null）
 - `MainScenario`: `{ CurrentQuestId, CurrentQuestName, NextQuestId, NextQuestName, LastCompletedQuestId, LastCompletedQuestName, CurrentExpansion, CompletedQuests, TotalQuests, AllComplete, Expansions }`、`Expansions[]`: `{ ExpansionId, Name, CompletedQuests, TotalQuests }`
 - `FateProgress[]`: `{ TabIndex, TerritoryTypeId, ZoneName, DisplayOrder, CurrentRank, MaxRank, FateProgress, NeededFates }`（FateProgress は最大ランクまでの累計達成数（総数 66）、NeededFates は次ランクまでの残り件数。v1.12.4 以降の正規化済みの値）
 - `Buddy`: `{ Name, Rank, CurrentExp, MaxExp, SkillPoints, LevelUpReady }`（MaxExp は不明な場合 null。LevelUpReady は経験値が満タンでランク上限（20）未満のとき true ＝ 厩舎でサベネアオニオンを与えるとランクが上がる状態）
@@ -101,7 +103,7 @@ This document describes everything another plugin or tool needs to connect to th
 
 読み手への注意:
 
-- セクションはプラグインのバージョンによって存在しないことがあります。**欠けているセクションは「未対応」として扱い、エラーにしないでください**（例: MainScenario は v1.11.0 以降、FateProgress は v1.12.0 以降、Buddy は v1.13.0 以降、WeeklyTomestone / RouletteCompletion / PlayTime / GcAgentProbe / RetainerMarket は v1.14.0 以降）。
+- セクションはプラグインのバージョンによって存在しないことがあります。**欠けているセクションは「未対応」として扱い、エラーにしないでください**（例: MainScenario は v1.11.0 以降、FateProgress は v1.12.0 以降、Buddy は v1.13.0 以降、WeeklyTomestone / RouletteCompletion / PlayTime / GcAgentProbe / RetainerMarket は v1.14.0 以降、KnownHouses は v1.15.0 以降）。
 - ファイルは丸ごと書き換えられます。読み取り中に書き換えが起きる可能性があるため、パースに失敗したら少し待って再読してください。
 - 名前（Name フィールド）はゲーム内表示名で、言語設定に依存します。同一性の判定には ItemId 等の ID を使ってください。
 
@@ -199,7 +201,7 @@ This document describes everything another plugin or tool needs to connect to th
 
 ### プラグイン内部ファイル（参考）
 
-次は Muse Status Exporter の内部用サイドカーで、連携の境界ではありません（形式は予告なく変わることがあります）: `mstatus-gcsupply-<キャラ>-<ワールド>.json`（GC軍需品の最終取得分）、`mstatus-fateprogress-<キャラ>-<ワールド>.json`（FATE達成度の最終取得分）、`mstatus-buddy-<キャラ>-<ワールド>.json`（バディの最大経験値の最終既知値）、`mstatus-housing-<キャラ>-<ワールド>.json`（入室履歴）、`mstatus-playtime-<キャラ>-<ワールド>.json`（日別プレイ時間）、`mstatus-retainermarket-<キャラ>-<ワールド>.json`（リテイナー出品の最終取得分）、`mstatus-alerts-<キャラ>-<ワールド>.json`（ゲーム内通知の通知済み状態）。
+次は Muse Status Exporter の内部用サイドカーで、連携の境界ではありません（形式は予告なく変わることがあります）: `mstatus-gcsupply-<キャラ>-<ワールド>.json`（GC軍需品の最終取得分）、`mstatus-fateprogress-<キャラ>-<ワールド>.json`（FATE達成度の最終取得分）、`mstatus-buddy-<キャラ>-<ワールド>.json`（バディの最大経験値の最終既知値）、`mstatus-housing-<キャラ>-<ワールド>.json`（入室履歴）、`mstatus-playtime-<キャラ>-<ワールド>.json`（日別プレイ時間）、`mstatus-retainermarket-<キャラ>-<ワールド>.json`（リテイナー出品の最終取得分）、`mstatus-alerts-<キャラ>-<ワールド>.json`（ゲーム内通知の通知済み状態）、`mstatus-housing-known.json`（既知のハウスの最終入室。全キャラ共有）。
 
 ### 自分のプラグインを連携させるには
 
@@ -273,6 +275,7 @@ Top-level fields:
 | `GrandCompanySupply` | object? | Grand Company supply/provisioning requests |
 | `GcWindowDebug` | object? | GC capture debug info (readers may ignore it) |
 | `HousingVisits` | array | Visits to the player's own houses |
+| `KnownHouses` | array | Last entry and demolition date of the known houses (since v1.15.0) |
 | `MainScenario` | object? | Main scenario progress |
 | `FateProgress` | array | Shared FATE progress (all 18 zones) |
 | `Buddy` | object? | Chocobo companion (buddy) state |
@@ -293,6 +296,7 @@ Section shapes:
 - `Retainers[]`: `{ Name, ClassJob, Level, Gil, ItemCount, VentureId, VentureCompleteAt, MarketItemCount, MarketExpireAt }` (VentureId is 0 when no venture is running; MarketItemCount / MarketExpireAt exist since v1.14.0)
 - `GrandCompanySupply`: `{ Supply, Provisioning }`, each item `{ ItemId, Name, NumRequested }` (the current day's requests; until a new day's list is captured, the last captured list remains)
 - `HousingVisits[]`: `{ At, World, Kind, Ward, Plot, Room }` (Ward / Plot are the plugin's raw values and may be off by one from the displayed ward/plot numbers)
+- `KnownHouses[]`: `{ World, Ward, Plot, Kind, LastEntryAt, DaysSinceEntry, DemolitionDate, DaysUntilDemolition }` (Ward / Plot are the displayed numbers; DemolitionDate is 45 days after the last entry and DaysUntilDemolition the days left until it; when no entry is recorded, every value except LastEntryAt is null)
 - `MainScenario`: `{ CurrentQuestId, CurrentQuestName, NextQuestId, NextQuestName, LastCompletedQuestId, LastCompletedQuestName, CurrentExpansion, CompletedQuests, TotalQuests, AllComplete, Expansions }`, with `Expansions[]`: `{ ExpansionId, Name, CompletedQuests, TotalQuests }`
 - `FateProgress[]`: `{ TabIndex, TerritoryTypeId, ZoneName, DisplayOrder, CurrentRank, MaxRank, FateProgress, NeededFates }` (FateProgress is the cumulative completed count toward the max rank, 66 total; NeededFates is the remainder to the next rank. These are the normalized values used since v1.12.4)
 - `Buddy`: `{ Name, Rank, CurrentExp, MaxExp, SkillPoints, LevelUpReady }` (MaxExp is null when unknown. LevelUpReady is true when the EXP bar is full below the rank cap of 20 — feeding a Thavnairian Onion at a stable then raises the rank)
@@ -304,7 +308,7 @@ Section shapes:
 
 Notes for readers:
 
-- Sections may be absent depending on the plugin version. **Treat a missing section as "not supported" and never as an error** (for example, MainScenario exists since v1.11.0, FateProgress since v1.12.0, Buddy since v1.13.0, and WeeklyTomestone / RouletteCompletion / PlayTime / GcAgentProbe / RetainerMarket since v1.14.0).
+- Sections may be absent depending on the plugin version. **Treat a missing section as "not supported" and never as an error** (for example, MainScenario exists since v1.11.0, FateProgress since v1.12.0, Buddy since v1.13.0, and WeeklyTomestone / RouletteCompletion / PlayTime / GcAgentProbe / RetainerMarket since v1.14.0, and KnownHouses since v1.15.0).
 - Files are rewritten as a whole. A read can race a rewrite, so if parsing fails, wait briefly and read again.
 - `Name` fields hold in-game display names and depend on the game language. Use ids such as ItemId for identity.
 
@@ -402,7 +406,7 @@ Implementation commitments of the bundled uploader:
 
 ### Plugin-internal files (for reference)
 
-The following are Muse Status Exporter's internal sidecars, not part of the integration boundary (their formats may change without notice): `mstatus-gcsupply-<Character>-<World>.json` (last captured GC supply list), `mstatus-fateprogress-<Character>-<World>.json` (last captured FATE progress), `mstatus-buddy-<Character>-<World>.json` (last known buddy max EXP), `mstatus-housing-<Character>-<World>.json` (housing visit history), `mstatus-playtime-<Character>-<World>.json` (daily play time), `mstatus-retainermarket-<Character>-<World>.json` (last captured retainer listings), `mstatus-alerts-<Character>-<World>.json` (announced in-game alert state).
+The following are Muse Status Exporter's internal sidecars, not part of the integration boundary (their formats may change without notice): `mstatus-gcsupply-<Character>-<World>.json` (last captured GC supply list), `mstatus-fateprogress-<Character>-<World>.json` (last captured FATE progress), `mstatus-buddy-<Character>-<World>.json` (last known buddy max EXP), `mstatus-housing-<Character>-<World>.json` (housing visit history), `mstatus-playtime-<Character>-<World>.json` (daily play time), `mstatus-retainermarket-<Character>-<World>.json` (last captured retainer listings), `mstatus-alerts-<Character>-<World>.json` (announced in-game alert state), `mstatus-housing-known.json` (last entry of the known houses, shared by all characters).
 
 ### Connecting your own plugin
 
