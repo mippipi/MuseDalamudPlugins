@@ -73,6 +73,8 @@ public sealed class ConfigWindow : Window
             () => configuration.LearnHousingOwnership, v => configuration.LearnHousingOwnership = v);
         DrawCheckbox("ログイン中のキャラクターのFC（名前・タグ）を記録する",
             () => configuration.ExportFreeCompany, v => configuration.ExportFreeCompany = v);
+        DrawCheckbox("資格のある入室でハウスの最終入室が更新されたら知らせる",
+            () => configuration.HousingEntryNotice, v => configuration.HousingEntryNotice = v);
     }
 
     private void DrawCheckbox(string label, Func<bool> get, Action<bool> set)

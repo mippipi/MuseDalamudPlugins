@@ -77,5 +77,8 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Record the logged-in character's Free Company (id, name, tag) in the snapshot (v1.16.0).</summary>
     public bool ExportFreeCompany { get; set; } = true;
 
+    /// <summary>Print a chat notice when a qualified entry updates a known house's last entry and demolition date (v1.17.0).</summary>
+    public bool HousingEntryNotice { get; set; } = true;
+
     public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
 }

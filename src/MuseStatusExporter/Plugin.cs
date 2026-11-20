@@ -207,6 +207,10 @@ namespace MuseStatusExporter;
 /// marked unverified and shown as such （所有者未確認）. The snapshot
 /// also records the logged-in character's Free Company (id, name,
 /// tag) whenever it can be read.
+/// v1.17.0 announces a known house's last-entry update in the chat
+/// log whenever a qualified entry advances it, with the house's new
+/// demolition date (marked as unverified while the house's ownership
+/// has not been learned yet).
 /// </summary>
 public sealed class Plugin : IDalamudPlugin
 {
@@ -3447,6 +3451,20 @@ public sealed class Plugin : IDalamudPlugin
             entry.Seeded = false;
             entry.LastEntryVerified = entry.OwnerKind != null;
             SaveKnownHouses(file);
+
+            // Announce the update (v1.17.0): the last entry and the
+            // demolition date moved because a qualified character
+            // entered the house.
+            if (configuration.HousingEntryNotice
+                && DateTimeOffset.TryParse(visit.At, out var enteredAt))
+            {
+                var demolition = enteredAt.Date.AddDays(HousingDemolitionDays);
+                var daysLeft = (demolition - DateTime.Today).Days;
+                var message = $"[Muse Status Exporter] ハウス {def.World} 第{def.Ward}区{def.Plot}番地（{def.Kind}）: 最終入室を更新しました（撤去予定日 {demolition:yyyy-MM-dd}、あと {daysLeft} 日）";
+                if (!entry.LastEntryVerified)
+                    message += "（所有者未確認）";
+                ChatGui.Print(message);
+            }
         }
     }
 
