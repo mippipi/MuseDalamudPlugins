@@ -29,8 +29,11 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Record visits to the player's own houses.</summary>
     public bool RecordHousingVisits { get; set; } = true;
 
-    /// <summary>Record incoming /tell messages to the tells file.</summary>
+    /// <summary>Record /tell messages (incoming and outgoing) to the chat file.</summary>
     public bool RecordTells { get; set; } = true;
+
+    /// <summary>Record party and cross-world party chat to the chat file.</summary>
+    public bool RecordPartyChat { get; set; } = true;
 
     /// <summary>Apply plugin configuration files sent by Muse (config-inbox).</summary>
     public bool ConfigDownlink { get; set; } = true;

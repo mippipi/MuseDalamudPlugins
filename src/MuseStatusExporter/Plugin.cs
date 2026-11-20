@@ -251,7 +251,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
-    private const int MaxTellEntries = 200;
+    private const int MaxChatEntries = 1000;
     private const int MaxHousingVisitEntries = 100;
 
     // Inventory containers exported into the snapshot, in a stable order.
@@ -651,13 +651,29 @@ public sealed class Plugin : IDalamudPlugin
             ChatGui.Print("[Muse Status Exporter] Not logged in; nothing to write.");
     }
 
-    /// <summary>Records incoming /tell messages to the per-character tells file.</summary>
+    /// <summary>
+    /// Records chat messages to the per-character chat file (the tells file):
+    /// tells in both directions and party / cross-world party chat. For an
+    /// outgoing tell, the sender field carries the recipient, matching how
+    /// the game's own chat log presents it.
+    /// </summary>
     private void OnChatMessage(IHandleableChatMessage message)
     {
-        if (message.LogKind != XivChatType.TellIncoming)
+        var channel = message.LogKind switch
+        {
+            XivChatType.TellIncoming => "TellIncoming",
+            XivChatType.TellOutgoing => "TellOutgoing",
+            XivChatType.Party => "Party",
+            XivChatType.CrossParty => "CrossParty",
+            _ => null,
+        };
+        if (channel == null)
             return;
 
-        if (!configuration.RecordTells)
+        var isTell = channel is "TellIncoming" or "TellOutgoing";
+        if (isTell && !configuration.RecordTells)
+            return;
+        if (!isTell && !configuration.RecordPartyChat)
             return;
 
         try
@@ -689,6 +705,7 @@ public sealed class Plugin : IDalamudPlugin
             {
                 Id = Guid.NewGuid().ToString("N"),
                 At = DateTimeOffset.Now.ToString("o"),
+                Channel = channel,
                 Sender = sender,
                 SenderWorld = senderWorld.Length == 0 ? null : senderWorld,
                 Message = message.Message.TextValue,
@@ -698,7 +715,7 @@ public sealed class Plugin : IDalamudPlugin
         }
         catch (Exception ex)
         {
-            Log.Error(ex, "Failed to record an incoming tell.");
+            Log.Error(ex, "Failed to record a chat message.");
         }
     }
 
@@ -725,8 +742,8 @@ public sealed class Plugin : IDalamudPlugin
             file.World = world;
             file.UpdatedAt = entry.At;
             file.Tells.Add(entry);
-            if (file.Tells.Count > MaxTellEntries)
-                file.Tells.RemoveRange(0, file.Tells.Count - MaxTellEntries);
+            if (file.Tells.Count > MaxChatEntries)
+                file.Tells.RemoveRange(0, file.Tells.Count - MaxChatEntries);
 
             var json = JsonSerializer.Serialize(file, JsonOptions);
             var tmpPath = path + ".tmp";
@@ -4439,6 +4456,13 @@ public sealed class Plugin : IDalamudPlugin
     {
         public string Id { get; set; } = string.Empty;
         public string At { get; set; } = string.Empty;
+
+        /// <summary>
+        /// Chat channel: TellIncoming / TellOutgoing / Party / CrossParty.
+        /// Null in entries written before v1.19.0; those are incoming tells.
+        /// </summary>
+        public string? Channel { get; set; }
+
         public string Sender { get; set; } = string.Empty;
         public string? SenderWorld { get; set; }
         public string Message { get; set; } = string.Empty;

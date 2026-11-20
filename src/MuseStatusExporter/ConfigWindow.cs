@@ -41,8 +41,10 @@ public sealed class ConfigWindow : Window
             () => configuration.CaptureGcSupply, v => configuration.CaptureGcSupply = v);
         DrawCheckbox("ハウス訪問を記録する",
             () => configuration.RecordHousingVisits, v => configuration.RecordHousingVisits = v);
-        DrawCheckbox("Tellを記録する",
+        DrawCheckbox("Tell（送受信）を記録する",
             () => configuration.RecordTells, v => configuration.RecordTells = v);
+        DrawCheckbox("パーティチャット（クロスワールドPT含む）を記録する",
+            () => configuration.RecordPartyChat, v => configuration.RecordPartyChat = v);
         DrawCheckbox("設定ダウンリンク（Museからの設定適用）",
             () => configuration.ConfigDownlink, v => configuration.ConfigDownlink = v);
         DrawCheckbox("ハルオーネイヤリングを自動装備する",

@@ -38,7 +38,7 @@ This document describes everything another plugin or tool needs to connect to th
 | ファイル | 方向 | 説明 |
 |---|---|---|
 | `ffxiv-status-<キャラ名>-<ワールド名>.json` | プラグイン → 読み手 | キャラ別ステータス スナップショット（後述） |
-| `ffxiv-tells-<キャラ名>-<ワールド名>.json` | プラグイン → 読み手 | 受信テルの記録（後述） |
+| `ffxiv-tells-<キャラ名>-<ワールド名>.json` | プラグイン → 読み手 | チャット記録（Tell送受信・パーティ。後述） |
 | `ffxiv-config-requests.json` | 配布者 → プラグイン | 設定ダウンリンクのリクエスト一覧（共有先に置く） |
 | `ffxiv-config-results.json` | プラグイン → 配布者 | ダウンリンクの適用結果（プラグインが設定フォルダに書き、トランスポートが共有先へ運ぶ） |
 | `config-inbox\<リクエストID>.json` | トランスポート → プラグイン | 配信されたリクエスト封筒（処理後は `config-inbox\done\` へ移動） |
@@ -119,12 +119,12 @@ This document describes everything another plugin or tool needs to connect to th
   "World": "…",
   "UpdatedAt": "2026-11-20T12:00:00+09:00",
   "Tells": [
-    { "Id": "…", "At": "…", "Sender": "…", "SenderWorld": "…", "Message": "…" }
+    { "Id": "…", "At": "…", "Channel": "TellIncoming", "Sender": "…", "SenderWorld": "…", "Message": "…" }
   ]
 }
 ```
 
-新しい順ではなく到着順に最大 200 件を保持します。`Id` は重複排除用の識別子です。
+新しい順ではなく到着順に最大 1,000 件を保持します。`Id` は重複排除用の識別子です。v1.19.0 以降、各エントリに `Channel`（TellIncoming / TellOutgoing / Party / CrossParty）が付きます。それ以前のエントリには Channel が無く、受信テルです。送信テルの `Sender` は宛先を指します。
 
 ### 設定ダウンリンク プロトコル
 
@@ -245,7 +245,7 @@ Everything is relative to the target plugin's config folder (`%AppData%\XIVLaunc
 | File | Direction | Description |
 |---|---|---|
 | `ffxiv-status-<Character>-<World>.json` | plugin → reader | Per-character status snapshot (see below) |
-| `ffxiv-tells-<Character>-<World>.json` | plugin → reader | Recorded incoming tells (see below) |
+| `ffxiv-tells-<Character>-<World>.json` | plugin → reader | Recorded chat: tells in both directions and party chat (see below) |
 | `ffxiv-config-requests.json` | sender → plugin | Config downlink requests (kept at the shared location) |
 | `ffxiv-config-results.json` | plugin → sender | Downlink outcomes (written by the plugin into its config folder, carried to the shared location by the transport) |
 | `config-inbox\<request ID>.json` | transport → plugin | A delivered request envelope (moved to `config-inbox\done\` after processing) |
@@ -326,12 +326,12 @@ Notes for readers:
   "World": "…",
   "UpdatedAt": "2026-11-20T12:00:00+09:00",
   "Tells": [
-    { "Id": "…", "At": "…", "Sender": "…", "SenderWorld": "…", "Message": "…" }
+    { "Id": "…", "At": "…", "Channel": "TellIncoming", "Sender": "…", "SenderWorld": "…", "Message": "…" }
   ]
 }
 ```
 
-Keeps up to 200 entries in arrival order. `Id` is an identifier for de-duplication.
+Keeps up to 1000 entries in arrival order. `Id` is an identifier for de-duplication. Since v1.19.0 each entry carries a `Channel` (TellIncoming / TellOutgoing / Party / CrossParty); earlier entries have no Channel and are incoming tells. For an outgoing tell, `Sender` names the recipient.
 
 ### Config downlink protocol
 

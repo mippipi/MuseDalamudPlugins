@@ -44,7 +44,7 @@ FFXIV の Dalamud 用カスタムプラグイン リポジトリです。プラ�
 - 週間トームストーンの取得状況、コンテンツルーレットの消化状況、プレイ時間
 - リテイナーの出品数と、開いたリテイナーの出品リスト（単価つき）
 
-そのほか、受信した `/tell` の記録、付属アップローダーを経由して届くプラグイン設定ファイルの適用（設定ダウンリンク: 検証・バックアップ・期待ハッシュ照合・プラグイン再読み込みつき）、レベルキャップ未満の戦闘ジョブ使用時のハルオーネイヤリング（経験値+30%、Lv1〜100）の自動装備、ベンチャー完了やバディのレベルアップ可能化などを知らせるゲーム内通知、ログイン時のサマリー表示（GC軍需品の不足件数・ベンチャーの完了見込み・週間トームストーンの残り・各ハウスの最終入室からの経過日数と撤去予定日。撤去予定日まで7日を切ると警告）を行います。すべての機能はプラグインの設定ウィンドウで個別にオン／オフできます。
+そのほか、`/tell`（送受信）とパーティ／クロスワールドパーティチャットの記録、付属アップローダーを経由して届くプラグイン設定ファイルの適用（設定ダウンリンク: 検証・バックアップ・期待ハッシュ照合・プラグイン再読み込みつき）、レベルキャップ未満の戦闘ジョブ使用時のハルオーネイヤリング（経験値+30%、Lv1〜100）の自動装備、ベンチャー完了やバディのレベルアップ可能化などを知らせるゲーム内通知、ログイン時のサマリー表示（GC軍需品の不足件数・ベンチャーの完了見込み・週間トームストーンの残り・各ハウスの最終入室からの経過日数と撤去予定日。撤去予定日まで7日を切ると警告）を行います。すべての機能はプラグインの設定ウィンドウで個別にオン／オフできます。
 
 ソースコード: [`src/MuseStatusExporter`](src/MuseStatusExporter)
 
@@ -106,7 +106,7 @@ plugin's config folder:
 - Weekly tomestone progress, daily duty-roulette completion state, and play time
 - Retainer market listing counts, plus the opened retainer's listings with unit prices
 
-It also records incoming `/tell` messages, applies plugin configuration
+It also records `/tell` messages in both directions and party / cross-world party chat, applies plugin configuration
 files delivered through a companion uploader (config downlink, with
 validation, backups, an expected-hash guard and plugin reload), and keeps
 the Halone Earring (EXP +30%, levels 1–100) equipped while a battle
