@@ -47,5 +47,23 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Include chocobo companion (buddy) rank and EXP in the snapshot.</summary>
     public bool ExportBuddy { get; set; } = true;
 
+    /// <summary>Include the weekly limited-tomestone progress in the snapshot.</summary>
+    public bool ExportWeeklyTomestone { get; set; } = true;
+
+    /// <summary>Include the daily duty-roulette completion state in the snapshot.</summary>
+    public bool ExportRouletteCompletion { get; set; } = true;
+
+    /// <summary>Record per-character play sessions and daily play time.</summary>
+    public bool RecordPlayTime { get; set; } = true;
+
+    /// <summary>Record the Grand Company supply agent's state in the snapshot (experimental).</summary>
+    public bool ProbeGcAgent { get; set; } = true;
+
+    /// <summary>Capture a summoned retainer's market-board listings into the snapshot.</summary>
+    public bool ExportRetainerMarket { get; set; } = true;
+
+    /// <summary>Print in-game chat notifications (venture completion, buddy level-up ready, new GC list).</summary>
+    public bool InGameAlerts { get; set; } = true;
+
     public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
 }

@@ -39,8 +39,10 @@ FFXIV の Dalamud 用カスタムプラグイン リポジトリです。プラ�
 - メインクエストの進行状況
 - 全18エリアの共有FATE達成度（Auto FATE Grind と同じ方式でサーバーへ能動取得するため、FATEウィンドウを開く必要はありません）
 - バディ（チョコボ）のランクと経験値、レベルアップ可能かどうかの判定
+- 週間トームストーンの取得状況、コンテンツルーレットの消化状況、プレイ時間
+- リテイナーの出品数と、開いたリテイナーの出品リスト（単価つき）
 
-そのほか、受信した `/tell` の記録、付属アップローダーを経由して届くプラグイン設定ファイルの適用（設定ダウンリンク: 検証・バックアップ・期待ハッシュ照合・プラグイン再読み込みつき）、レベルキャップ未満の戦闘ジョブ使用時のハルオーネイヤリング（経験値+30%、Lv1〜100）の自動装備を行います。すべての機能はプラグインの設定ウィンドウで個別にオン／オフできます。
+そのほか、受信した `/tell` の記録、付属アップローダーを経由して届くプラグイン設定ファイルの適用（設定ダウンリンク: 検証・バックアップ・期待ハッシュ照合・プラグイン再読み込みつき）、レベルキャップ未満の戦闘ジョブ使用時のハルオーネイヤリング（経験値+30%、Lv1〜100）の自動装備、ベンチャー完了やバディのレベルアップ可能化などを知らせるゲーム内通知を行います。すべての機能はプラグインの設定ウィンドウで個別にオン／オフできます。
 
 ソースコード: [`src/MuseStatusExporter`](src/MuseStatusExporter)
 
@@ -97,12 +99,14 @@ plugin's config folder:
 - Shared FATE progress for all 18 zones (requested from the server,
   Auto FATE Grind style — no need to open the FATE window)
 - Chocobo companion (buddy) rank and EXP, including level-up readiness
+- Weekly tomestone progress, daily duty-roulette completion state, and play time
+- Retainer market listing counts, plus the opened retainer's listings with unit prices
 
 It also records incoming `/tell` messages, applies plugin configuration
 files delivered through a companion uploader (config downlink, with
 validation, backups, an expected-hash guard and plugin reload), and keeps
 the Halone Earring (EXP +30%, levels 1–100) equipped while a battle
-class/job below the level cap is active. Every feature has its own
+class/job below the level cap is active. It also prints in-game chat notifications when a retainer venture completes, when the buddy becomes ready to level up, and when a new daily GC supply list is captured. Every feature has its own
 checkbox in the plugin's settings window.
 
 Source code: [`src/MuseStatusExporter`](src/MuseStatusExporter)

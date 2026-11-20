@@ -53,6 +53,18 @@ public sealed class ConfigWindow : Window
             () => configuration.ExportFateProgress, v => configuration.ExportFateProgress = v);
         DrawCheckbox("バディ（チョコボ）のランクと経験値を記録する",
             () => configuration.ExportBuddy, v => configuration.ExportBuddy = v);
+        DrawCheckbox("週間トームストーンの取得状況を記録する",
+            () => configuration.ExportWeeklyTomestone, v => configuration.ExportWeeklyTomestone = v);
+        DrawCheckbox("コンテンツルーレットの消化状況を記録する",
+            () => configuration.ExportRouletteCompletion, v => configuration.ExportRouletteCompletion = v);
+        DrawCheckbox("プレイ時間を記録する",
+            () => configuration.RecordPlayTime, v => configuration.RecordPlayTime = v);
+        DrawCheckbox("GCエージェントの状態を記録する（実験）",
+            () => configuration.ProbeGcAgent, v => configuration.ProbeGcAgent = v);
+        DrawCheckbox("リテイナーの出品リストを記録する",
+            () => configuration.ExportRetainerMarket, v => configuration.ExportRetainerMarket = v);
+        DrawCheckbox("ゲーム内通知（ベンチャー完了・バディ・GC新リスト）",
+            () => configuration.InGameAlerts, v => configuration.InGameAlerts = v);
     }
 
     private void DrawCheckbox(string label, Func<bool> get, Action<bool> set)

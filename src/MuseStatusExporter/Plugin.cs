@@ -142,6 +142,38 @@ namespace MuseStatusExporter;
 /// array is not always populated. "LevelUpReady" is set when the EXP
 /// bar is full below the rank cap (20): feeding a Thavnairian Onion at
 /// a stable then raises the rank.
+///
+/// Since v1.14.0 the snapshot also carries:
+/// - "WeeklyTomestone": the weekly acquired count and the weekly limit
+///   of the current limited tomestone, read natively from
+///   InventoryManager (GetWeeklyAcquiredTomestoneCount /
+///   GetLimitedTomestoneWeeklyLimit).
+/// - "RouletteCompletion": the raw PlayerState.ContentRouletteCompletion
+///   bytes (10 entries) plus one entry per ContentRoulette sheet row,
+///   pairing row id N with byte N-1 (provisional mapping, to be
+///   calibrated against real play data).
+/// - "PlayTime": the current session's start and elapsed seconds, the
+///   total play seconds of today and the per-day totals of the last
+///   days, accounted on every export and kept per character in a
+///   sidecar file ("mstatus-playtime-&lt;Character&gt;-&lt;World&gt;.json").
+/// - "GcAgentProbe" (experimental): the state of
+///   AgentGrandCompanySupply at snapshot time - whether its
+///   SupplyProvisioningData pointer is set, how many supply /
+///   provisioning entries it holds, and the ItemArray contents - so it
+///   can be learned when (if ever) the agent receives the daily list
+///   without a window being opened.
+/// - "RetainerMarket": each retainer entry now also reports the number
+///   of items it has listed on the market board and the listing expiry;
+///   while a retainer is summoned, its market listings (item, count,
+///   unit price) are captured and kept per character in a sidecar file
+///   ("mstatus-retainermarket-&lt;Character&gt;-&lt;World&gt;.json").
+/// The plugin can also print in-game chat notifications when a retainer
+/// venture completes, when the buddy becomes ready to level up, and
+/// when a new daily Grand Company supply list is captured. Alert state
+/// is kept per character ("mstatus-alerts-&lt;Character&gt;-&lt;World&gt;.json")
+/// so each event is announced once. PlayTime and GcAgentProbe are kept
+/// out of the change-detection payload: both change on every read, so
+/// including them would rewrite the status file on every tick.
 /// </summary>
 public sealed class Plugin : IDalamudPlugin
 {
@@ -248,6 +280,34 @@ public sealed class Plugin : IDalamudPlugin
     private const int BuddyMaxRank = 20;
     private readonly object buddyLock = new();
     private readonly Dictionary<string, int> buddyMaxExpByCharacter = new();
+
+    // Play time accounting (v1.14.0). The session start and the last
+    // accounting instant are kept in memory; the per-day totals live in
+    // a per-character sidecar file. Accounting runs on every export and
+    // once more on logout, so a session is never lost.
+    private readonly object playTimeLock = new();
+    private readonly Dictionary<string, Dictionary<string, long>> playDaysByCharacter = new();
+    private DateTimeOffset? sessionStartAt;
+    private DateTimeOffset lastPlayAccountAt;
+    private string playSessionCharacter = string.Empty;
+    private string playSessionWorld = string.Empty;
+    private DateTime lastPlaySaveUtc = DateTime.MinValue;
+
+    // Retainer market capture (v1.14.0): while a retainer is summoned,
+    // its market listings are readable from the RetainerMarket container
+    // plus InventoryManager.RetainerMarketPrices. The newest capture per
+    // retainer is kept (memory + sidecar file) and embedded into every
+    // snapshot, mirroring the GC supply capture.
+    private readonly object retainerMarketLock = new();
+    private readonly Dictionary<string, List<RetainerMarketData>> retainerMarketByCharacter = new();
+    private readonly Dictionary<string, string> retainerMarketKeyByCharacter = new();
+    private DateTime lastRetainerMarketCheckUtc = DateTime.MinValue;
+
+    // In-game alerts (v1.14.0): which one-shot events were already
+    // announced per character, kept in a sidecar file so a plugin reload
+    // does not announce the same event twice.
+    private readonly object alertLock = new();
+    private readonly Dictionary<string, AlertStateFile> alertStateByCharacter = new();
 
     // Shared FATE progress through achievement requests (v1.12.2), the
     // design Auto FATE Grind uses: every shared-FATE zone's completed
@@ -399,10 +459,21 @@ public sealed class Plugin : IDalamudPlugin
         // Force the next tick to export, even if nothing appears to have changed.
         lastPayloadJson = null;
         lastWriteUtc = DateTime.MinValue;
+
+        // A new play session starts with the next export (v1.14.0).
+        lock (playTimeLock)
+        {
+            sessionStartAt = null;
+            playSessionCharacter = string.Empty;
+            playSessionWorld = string.Empty;
+        }
     }
 
     private void OnLogout(int type, int code)
     {
+        // Settle the play time of the ending session (v1.14.0).
+        AccountPlayTimeFinal();
+
         // Shared FATE achievement progress belongs to the logged-in
         // character; forget it so the next character starts clean (the
         // same reset Auto FATE Grind performs on logout).
@@ -543,6 +614,14 @@ public sealed class Plugin : IDalamudPlugin
             configSync.Tick();
         }
 
+        // Poll the summoned retainer's market listings once a second
+        // (v1.14.0); the container only holds data while one is open.
+        if (now - lastRetainerMarketCheckUtc >= TimeSpan.FromSeconds(1))
+        {
+            lastRetainerMarketCheckUtc = now;
+            PollRetainerMarket();
+        }
+
         // Keep the EXP earring equipped while leveling a battle job (v1.9.0).
         if (now - lastExpEarringCheckUtc >= ExpEarringCheckInterval)
         {
@@ -555,6 +634,7 @@ public sealed class Plugin : IDalamudPlugin
         lastCheckUtc = now;
 
         TryExport(force: false);
+        CheckAlerts();
     }
 
     /// <summary>
@@ -875,6 +955,29 @@ public sealed class Plugin : IDalamudPlugin
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to save the Grand Company supply capture.");
+        }
+
+        // A capture stored on a new day is the day's new list: announce
+        // it in game, once per day (v1.14.0).
+        if (configuration.InGameAlerts)
+        {
+            var state = GetAlertState(character, world);
+            var today = DateTimeOffset.Now.ToString("yyyy-MM-dd");
+            var announce = false;
+            lock (alertLock)
+            {
+                if (state.LastGcAlertDate != today)
+                {
+                    state.LastGcAlertDate = today;
+                    announce = true;
+                }
+            }
+
+            if (announce)
+            {
+                SaveAlertState(character, world, state);
+                ChatGui.Print("[Muse Status Exporter] GC軍需品の新しいリストを取得しました。");
+            }
         }
 
         if (TryExport(force: true))
@@ -1584,6 +1687,61 @@ public sealed class Plugin : IDalamudPlugin
             Log.Warning(ex, "Failed to read buddy data.");
         }
 
+        // ---- Weekly limited tomestone (v1.14.0) --------------------------------
+        try
+        {
+            if (configuration.ExportWeeklyTomestone)
+                snapshot.WeeklyTomestone = BuildWeeklyTomestone();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to read weekly tomestone progress.");
+        }
+
+        // ---- Daily roulette completion (v1.14.0) --------------------------------
+        try
+        {
+            if (configuration.ExportRouletteCompletion)
+                snapshot.RouletteCompletion = BuildRouletteCompletion();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to read roulette completion state.");
+        }
+
+        // ---- Play time (v1.14.0) --------------------------------------------------
+        try
+        {
+            if (configuration.RecordPlayTime)
+                snapshot.PlayTime = BuildPlayTime(snapshot.Character, snapshot.World);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to account play time.");
+        }
+
+        // ---- Grand Company agent probe (v1.14.0, experimental) -------------------
+        try
+        {
+            if (configuration.ProbeGcAgent)
+                snapshot.GcAgentProbe = BuildGcAgentProbe();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to probe the Grand Company supply agent.");
+        }
+
+        // ---- Retainer market listings (v1.14.0) -----------------------------------
+        try
+        {
+            if (configuration.ExportRetainers && configuration.ExportRetainerMarket)
+                snapshot.RetainerMarket = LoadRetainerMarket(snapshot.Character, snapshot.World);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to read retainer market listings.");
+        }
+
         return snapshot;
     }
 
@@ -1704,6 +1862,640 @@ public sealed class Plugin : IDalamudPlugin
     private string GetBuddyCapturePath(string character, string world)
     {
         var fileName = $"mstatus-buddy-{SanitizeFilePart(character)}-{SanitizeFilePart(world)}.json";
+        return Path.Combine(configDirectory, fileName);
+    }
+
+    // ---- Weekly tomestone (v1.14.0) --------------------------------------
+
+    /// <summary>
+    /// Reads the weekly progress of the current limited tomestone from
+    /// InventoryManager's native counters: how many were acquired this
+    /// week and the weekly limit. Returns null when neither is known
+    /// (e.g. before tomestones are unlocked).
+    /// </summary>
+    private unsafe WeeklyTomestoneData? BuildWeeklyTomestone()
+    {
+        var inventory = InventoryManager.Instance();
+        if (inventory == null)
+            return null;
+
+        var acquired = inventory->GetWeeklyAcquiredTomestoneCount();
+        var limit = InventoryManager.GetLimitedTomestoneWeeklyLimit();
+        if (acquired <= 0 && limit <= 0)
+            return null;
+
+        return new WeeklyTomestoneData { Acquired = acquired, Limit = limit };
+    }
+
+    // ---- Roulette completion (v1.14.0) ------------------------------------
+
+    /// <summary>
+    /// Reads PlayerState.ContentRouletteCompletion (10 raw bytes). The
+    /// exact meaning of each byte is not documented in the bindings, so
+    /// the raw array is exported as-is; the per-roulette entries pair
+    /// ContentRoulette row id N with byte N-1, which is the natural
+    /// layout but stays provisional until real play data confirms it.
+    /// </summary>
+    private unsafe RouletteCompletionData? BuildRouletteCompletion()
+    {
+        var playerState = PlayerState.Instance();
+        if (playerState == null)
+            return null;
+
+        var values = playerState->ContentRouletteCompletion;
+        if (values.Length == 0)
+            return null;
+
+        var data = new RouletteCompletionData();
+        for (var i = 0; i < values.Length; i++)
+            data.RawValues.Add(values[i]);
+
+        var sheet = DataManager.GetExcelSheet<Lumina.Excel.Sheets.ContentRoulette>();
+        if (sheet != null)
+        {
+            foreach (var row in sheet)
+            {
+                var id = (int)row.RowId;
+                if (id <= 0)
+                    continue;
+
+                var entry = new RouletteCompletionEntry
+                {
+                    RouletteId = id,
+                    Name = row.Name.ExtractText(),
+                };
+                if (id - 1 < values.Length)
+                    entry.Value = values[id - 1];
+                data.Entries.Add(entry);
+            }
+        }
+
+        return data;
+    }
+
+    // ---- Play time (v1.14.0) ------------------------------------------------
+
+    /// <summary>
+    /// Accounts the elapsed time since the last accounting into the
+    /// per-day totals and returns the snapshot section. The session
+    /// starts at the first export after login (or plugin load).
+    /// </summary>
+    private PlayTimeData BuildPlayTime(string character, string world)
+    {
+        AccountPlayTime(character, world, final: false);
+
+        var now = DateTimeOffset.Now;
+        var today = now.ToString("yyyy-MM-dd");
+        lock (playTimeLock)
+        {
+            var days = playDaysByCharacter.TryGetValue($"{character}@{world}", out var cached)
+                ? cached
+                : LoadPlayTimeDays(character, world);
+            var data = new PlayTimeData
+            {
+                SessionStartedAt = sessionStartAt?.ToString("o"),
+                SessionSeconds = sessionStartAt.HasValue
+                    ? Math.Max(0, (long)(now - sessionStartAt.Value).TotalSeconds)
+                    : 0,
+                TodaySeconds = days.TryGetValue(today, out var todaySeconds) ? todaySeconds : 0,
+            };
+            foreach (var pair in days.OrderByDescending(p => p.Key).Take(14))
+                data.Days.Add(new PlayTimeDayEntry { Date = pair.Key, Seconds = pair.Value });
+            data.Days.Reverse();
+            return data;
+        }
+    }
+
+    private void AccountPlayTimeFinal()
+    {
+        string character, world;
+        lock (playTimeLock)
+        {
+            character = playSessionCharacter;
+            world = playSessionWorld;
+        }
+
+        if (character.Length == 0)
+            return;
+
+        AccountPlayTime(character, world, final: true);
+        lock (playTimeLock)
+        {
+            sessionStartAt = null;
+            playSessionCharacter = string.Empty;
+            playSessionWorld = string.Empty;
+        }
+    }
+
+    private void AccountPlayTime(string character, string world, bool final)
+    {
+        if (!configuration.RecordPlayTime)
+            return;
+
+        var now = DateTimeOffset.Now;
+        lock (playTimeLock)
+        {
+            var key = $"{character}@{world}";
+            if (sessionStartAt == null || playSessionCharacter != character || playSessionWorld != world)
+            {
+                sessionStartAt = now;
+                lastPlayAccountAt = now;
+                playSessionCharacter = character;
+                playSessionWorld = world;
+                if (!playDaysByCharacter.ContainsKey(key))
+                    playDaysByCharacter[key] = LoadPlayTimeDays(character, world);
+                return;
+            }
+
+            var days = playDaysByCharacter[key];
+            var cursor = lastPlayAccountAt;
+            while (cursor < now)
+            {
+                var midnight = new DateTimeOffset(cursor.Date.AddDays(1), cursor.Offset);
+                var segmentEnd = now < midnight ? now : midnight;
+                var dateKey = cursor.ToString("yyyy-MM-dd");
+                days[dateKey] = (days.TryGetValue(dateKey, out var soFar) ? soFar : 0)
+                    + (long)(segmentEnd - cursor).TotalSeconds;
+                cursor = segmentEnd;
+            }
+            lastPlayAccountAt = now;
+
+            // Keep the newest 35 days.
+            foreach (var old in days.Keys.OrderBy(d => d).Take(Math.Max(0, days.Count - 35)).ToList())
+                days.Remove(old);
+
+            if (final || now.UtcDateTime - lastPlaySaveUtc >= TimeSpan.FromSeconds(60))
+            {
+                lastPlaySaveUtc = now.UtcDateTime;
+                SavePlayTimeDays(character, world, days);
+            }
+        }
+    }
+
+    private Dictionary<string, long> LoadPlayTimeDays(string character, string world)
+    {
+        var result = new Dictionary<string, long>();
+        try
+        {
+            var path = GetPlayTimePath(character, world);
+            if (!File.Exists(path))
+                return result;
+
+            var file = JsonSerializer.Deserialize<PlayTimeFile>(File.ReadAllText(path));
+            if (file != null)
+                foreach (var day in file.Days)
+                    result[day.Date] = day.Seconds;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to load play time history.");
+        }
+
+        return result;
+    }
+
+    private void SavePlayTimeDays(string character, string world, Dictionary<string, long> days)
+    {
+        try
+        {
+            var file = new PlayTimeFile
+            {
+                Character = character,
+                World = world,
+                UpdatedAt = DateTimeOffset.Now.ToString("o"),
+            };
+            foreach (var pair in days.OrderBy(p => p.Key))
+                file.Days.Add(new PlayTimeDayEntry { Date = pair.Key, Seconds = pair.Value });
+
+            var path = GetPlayTimePath(character, world);
+            var json = JsonSerializer.Serialize(file, JsonOptions);
+            var tmpPath = path + ".tmp";
+            File.WriteAllText(tmpPath, json);
+            if (File.Exists(path))
+                File.Replace(tmpPath, path, null);
+            else
+                File.Move(tmpPath, path);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to save play time history.");
+        }
+    }
+
+    private string GetPlayTimePath(string character, string world)
+    {
+        var fileName = $"mstatus-playtime-{SanitizeFilePart(character)}-{SanitizeFilePart(world)}.json";
+        return Path.Combine(configDirectory, fileName);
+    }
+
+    // ---- Grand Company agent probe (v1.14.0, experimental) -------------------
+
+    /// <summary>
+    /// Records the state of AgentGrandCompanySupply at snapshot time.
+    /// BuildGrandCompanySupply already prefers the agent's data when it
+    /// holds any, but in every export so far the agent was empty and the
+    /// window capture had to be used. This probe therefore always
+    /// reports whether the data pointer is set and how many entries the
+    /// agent holds, so the moment the server starts pushing the list to
+    /// the agent (if it ever does) is visible in the exports.
+    /// </summary>
+    private unsafe GcAgentProbeData BuildGcAgentProbe()
+    {
+        var probe = new GcAgentProbeData { ReadAt = DateTimeOffset.Now.ToString("o") };
+        var agent = AgentGrandCompanySupply.Instance();
+        if (agent == null)
+            return probe;
+
+        probe.AgentAvailable = true;
+        var data = agent->SupplyProvisioningData;
+        probe.DataPresent = data != null;
+        if (data != null)
+        {
+            var supply = data->SupplyData;
+            for (var i = 0; i < supply.Length; i++)
+            {
+                var item = supply[i];
+                if (item.ItemId == 0)
+                    continue;
+
+                probe.Supply.Add(new SupplyItemEntry
+                {
+                    ItemId = item.ItemId,
+                    Name = item.ItemName.ToString(),
+                    NumRequested = item.NumRequested,
+                });
+            }
+
+            var provisioning = data->ProvisioningData;
+            for (var i = 0; i < provisioning.Length; i++)
+            {
+                var item = provisioning[i];
+                if (item.ItemId == 0)
+                    continue;
+
+                probe.Provisioning.Add(new SupplyItemEntry
+                {
+                    ItemId = item.ItemId,
+                    Name = item.ItemName.ToString(),
+                    NumRequested = item.NumRequested,
+                });
+            }
+        }
+
+        probe.ItemArrayCount = agent->NumItems;
+        if (agent->ItemArray != null && agent->NumItems > 0)
+        {
+            var count = Math.Min(agent->NumItems, 64);
+            for (var i = 0; i < count; i++)
+            {
+                var item = agent->ItemArray[i];
+                if (item.ItemId == 0)
+                    continue;
+
+                probe.Items.Add(new GcAgentItemEntry
+                {
+                    Position = item.Position,
+                    ItemId = item.ItemId,
+                    Name = item.ItemName.ToString(),
+                    NumRequested = item.NumRequested,
+                    NumPossessed = item.NumPossessed,
+                });
+            }
+        }
+
+        return probe;
+    }
+
+    // ---- Retainer market listings (v1.14.0) -------------------------------------
+
+    /// <summary>
+    /// While a retainer is summoned, reads its market listings from the
+    /// RetainerMarket container (unit prices come from
+    /// InventoryManager.RetainerMarketPrices) and keeps the newest
+    /// capture per retainer, mirroring the GC supply capture. Only
+    /// non-empty captures are stored; the per-retainer listing count in
+    /// the Retainers section always reflects the current state.
+    /// </summary>
+    private unsafe void PollRetainerMarket()
+    {
+        if (!configuration.ExportRetainers || !configuration.ExportRetainerMarket)
+            return;
+
+        try
+        {
+            var player = ObjectTable.LocalPlayer;
+            if (player == null)
+                return;
+
+            var manager = RetainerManager.Instance();
+            if (manager == null || !manager->IsReady)
+                return;
+
+            var active = manager->GetActiveRetainer();
+            if (active == null || !active->Available)
+                return;
+
+            var inventory = InventoryManager.Instance();
+            if (inventory == null)
+                return;
+
+            var container = inventory->GetInventoryContainer(InventoryType.RetainerMarket);
+            if (container == null || !container->IsLoaded || container->Items == null)
+                return;
+
+            var prices = inventory->RetainerMarketPrices;
+            var listings = new List<RetainerMarketListingEntry>();
+            for (var slot = 0; slot < container->Size; slot++)
+            {
+                var item = container->Items + slot;
+                if (item == null || item->ItemId == 0)
+                    continue;
+
+                listings.Add(new RetainerMarketListingEntry
+                {
+                    Slot = slot,
+                    ItemId = item->GetBaseItemId(),
+                    Name = ResolveItem(item->GetBaseItemId()).Name,
+                    Count = (int)item->Quantity,
+                    IsHq = item->IsHighQuality(),
+                    Price = slot < prices.Length ? (int)Math.Min(prices[slot], int.MaxValue) : 0,
+                });
+            }
+
+            if (listings.Count == 0)
+                return;
+
+            var capture = new RetainerMarketData
+            {
+                RetainerName = active->NameString,
+                CapturedAt = DateTimeOffset.Now.ToString("o"),
+                Listings = listings,
+            };
+            StoreRetainerMarket(player.Name.TextValue, ResolveWorldName(player.HomeWorld.RowId), capture);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to poll retainer market listings.");
+        }
+    }
+
+    private void StoreRetainerMarket(string character, string world, RetainerMarketData capture)
+    {
+        var key = $"{character}@{world}";
+        _ = LoadRetainerMarket(character, world); // populate the cache
+        var captureKey = RetainerMarketKey(capture);
+        var changed = false;
+        lock (retainerMarketLock)
+        {
+            var list = retainerMarketByCharacter[key];
+            var mapKey = $"{key}|{capture.RetainerName}";
+            if (!retainerMarketKeyByCharacter.TryGetValue(mapKey, out var existingKey) || existingKey != captureKey)
+            {
+                var index = list.FindIndex(m => m.RetainerName == capture.RetainerName);
+                if (index >= 0)
+                    list[index] = capture;
+                else
+                    list.Add(capture);
+                retainerMarketKeyByCharacter[mapKey] = captureKey;
+                changed = true;
+            }
+        }
+
+        if (!changed)
+            return;
+
+        SaveRetainerMarketFile(character, world);
+        TryExport(force: true);
+    }
+
+    private static string RetainerMarketKey(RetainerMarketData data)
+        => string.Join(",", data.Listings.Select(l => $"{l.Slot}:{l.ItemId}:{l.Count}:{l.Price}"));
+
+    private List<RetainerMarketData> LoadRetainerMarket(string character, string world)
+    {
+        var key = $"{character}@{world}";
+        lock (retainerMarketLock)
+        {
+            if (retainerMarketByCharacter.TryGetValue(key, out var cached))
+                return new List<RetainerMarketData>(cached);
+        }
+
+        var loaded = LoadRetainerMarketFile(character, world);
+        lock (retainerMarketLock)
+        {
+            retainerMarketByCharacter[key] = loaded;
+            foreach (var market in loaded)
+                retainerMarketKeyByCharacter[$"{key}|{market.RetainerName}"] = RetainerMarketKey(market);
+        }
+        return new List<RetainerMarketData>(loaded);
+    }
+
+    private List<RetainerMarketData> LoadRetainerMarketFile(string character, string world)
+    {
+        try
+        {
+            var path = GetRetainerMarketPath(character, world);
+            if (!File.Exists(path))
+                return [];
+
+            var file = JsonSerializer.Deserialize<RetainerMarketFile>(File.ReadAllText(path));
+            return file?.Markets ?? [];
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to load retainer market captures.");
+            return [];
+        }
+    }
+
+    private void SaveRetainerMarketFile(string character, string world)
+    {
+        try
+        {
+            List<RetainerMarketData> markets;
+            lock (retainerMarketLock)
+            {
+                markets = retainerMarketByCharacter.TryGetValue($"{character}@{world}", out var list)
+                    ? new List<RetainerMarketData>(list)
+                    : [];
+            }
+
+            var file = new RetainerMarketFile { Character = character, World = world, Markets = markets };
+            var path = GetRetainerMarketPath(character, world);
+            var json = JsonSerializer.Serialize(file, JsonOptions);
+            var tmpPath = path + ".tmp";
+            File.WriteAllText(tmpPath, json);
+            if (File.Exists(path))
+                File.Replace(tmpPath, path, null);
+            else
+                File.Move(tmpPath, path);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to save retainer market captures.");
+        }
+    }
+
+    private string GetRetainerMarketPath(string character, string world)
+    {
+        var fileName = $"mstatus-retainermarket-{SanitizeFilePart(character)}-{SanitizeFilePart(world)}.json";
+        return Path.Combine(configDirectory, fileName);
+    }
+
+    // ---- In-game alerts (v1.14.0) -------------------------------------------------
+
+    /// <summary>
+    /// Announces one-shot events in the in-game chat: a retainer venture
+    /// that has completed and the buddy becoming ready to level up.
+    /// Each event is announced once per character; the announced state
+    /// is kept in a sidecar file. Runs on the export cadence.
+    /// </summary>
+    private void CheckAlerts()
+    {
+        if (!configuration.InGameAlerts)
+            return;
+
+        try
+        {
+            var player = ObjectTable.LocalPlayer;
+            if (player == null)
+                return;
+
+            var character = player.Name.TextValue;
+            var world = ResolveWorldName(player.HomeWorld.RowId);
+            CheckVentureAlerts(character, world);
+            CheckBuddyAlert(character, world);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to check in-game alerts.");
+        }
+    }
+
+    private unsafe void CheckVentureAlerts(string character, string world)
+    {
+        var manager = RetainerManager.Instance();
+        if (manager == null || !manager->IsReady)
+            return;
+
+        var now = DateTimeOffset.Now.ToUnixTimeSeconds();
+        var state = GetAlertState(character, world);
+        var changed = false;
+        var count = (int)manager->GetRetainerCount();
+        for (var i = 0; i < count; i++)
+        {
+            var retainer = manager->GetRetainerBySortedIndex((uint)i);
+            if (retainer == null || !retainer->Available)
+                continue;
+            if (retainer->VentureId == 0 || retainer->VentureComplete == 0)
+                continue;
+            if (retainer->VentureComplete > now)
+                continue;
+
+            var key = $"{retainer->NameString}|{retainer->VentureComplete}";
+            lock (alertLock)
+            {
+                if (state.VentureAlertedKeys.Contains(key))
+                    continue;
+                state.VentureAlertedKeys.Add(key);
+                changed = true;
+            }
+            ChatGui.Print($"[Muse Status Exporter] リテイナー「{retainer->NameString}」のベンチャーが完了しました。");
+        }
+
+        if (!changed)
+            return;
+
+        lock (alertLock)
+        {
+            if (state.VentureAlertedKeys.Count > 100)
+                state.VentureAlertedKeys.RemoveRange(0, state.VentureAlertedKeys.Count - 100);
+        }
+        SaveAlertState(character, world, state);
+    }
+
+    private void CheckBuddyAlert(string character, string world)
+    {
+        if (!configuration.ExportBuddy)
+            return;
+
+        var buddy = BuildBuddy(character, world);
+        if (buddy == null)
+            return;
+
+        var state = GetAlertState(character, world);
+        var announce = false;
+        var changed = false;
+        lock (alertLock)
+        {
+            if (buddy.LevelUpReady && (!state.BuddyLevelUpAlerted || state.BuddyAlertedRank != buddy.Rank))
+            {
+                state.BuddyLevelUpAlerted = true;
+                state.BuddyAlertedRank = buddy.Rank;
+                announce = true;
+                changed = true;
+            }
+            else if (!buddy.LevelUpReady && state.BuddyLevelUpAlerted)
+            {
+                state.BuddyLevelUpAlerted = false;
+                changed = true;
+            }
+        }
+
+        if (changed)
+            SaveAlertState(character, world, state);
+        if (announce)
+            ChatGui.Print("[Muse Status Exporter] バディがレベルアップ可能になりました。厩舎でサベネアオニオンを与えるとランクが上がります。");
+    }
+
+    private AlertStateFile GetAlertState(string character, string world)
+    {
+        var key = $"{character}@{world}";
+        lock (alertLock)
+        {
+            if (alertStateByCharacter.TryGetValue(key, out var cached))
+                return cached;
+        }
+
+        var loaded = new AlertStateFile { Character = character, World = world };
+        try
+        {
+            var path = GetAlertStatePath(character, world);
+            if (File.Exists(path))
+                loaded = JsonSerializer.Deserialize<AlertStateFile>(File.ReadAllText(path)) ?? loaded;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to load alert state.");
+        }
+
+        lock (alertLock)
+            alertStateByCharacter[key] = loaded;
+        return loaded;
+    }
+
+    private void SaveAlertState(string character, string world, AlertStateFile state)
+    {
+        try
+        {
+            var path = GetAlertStatePath(character, world);
+            var json = JsonSerializer.Serialize(state, JsonOptions);
+            var tmpPath = path + ".tmp";
+            File.WriteAllText(tmpPath, json);
+            if (File.Exists(path))
+                File.Replace(tmpPath, path, null);
+            else
+                File.Move(tmpPath, path);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to save alert state.");
+        }
+    }
+
+    private string GetAlertStatePath(string character, string world)
+    {
+        var fileName = $"mstatus-alerts-{SanitizeFilePart(character)}-{SanitizeFilePart(world)}.json";
         return Path.Combine(configDirectory, fileName);
     }
 
@@ -2030,6 +2822,7 @@ public sealed class Plugin : IDalamudPlugin
                 Gil = retainer->Gil,
                 ItemCount = retainer->ItemCount,
                 VentureId = retainer->VentureId,
+                MarketItemCount = retainer->MarketItemCount,
             };
 
             if (classJobSheet != null && classJobSheet.TryGetRow(retainer->ClassJob, out var classJob))
@@ -2037,6 +2830,10 @@ public sealed class Plugin : IDalamudPlugin
 
             if (retainer->VentureId != 0 && retainer->VentureComplete != 0)
                 entry.VentureCompleteAt = DateTimeOffset.FromUnixTimeSeconds(retainer->VentureComplete)
+                    .ToLocalTime().ToString("o");
+
+            if (retainer->MarketExpire != 0)
+                entry.MarketExpireAt = DateTimeOffset.FromUnixTimeSeconds(retainer->MarketExpire)
                     .ToLocalTime().ToString("o");
 
             result.Add(entry);
@@ -2372,6 +3169,15 @@ public sealed class Plugin : IDalamudPlugin
         public List<HousingVisitEntry> HousingVisits => Snapshot.HousingVisits;
         public List<FateProgressZoneEntry> FateProgress => Snapshot.FateProgress;
         public BuddyData? Buddy => Snapshot.Buddy;
+        public WeeklyTomestoneData? WeeklyTomestone => Snapshot.WeeklyTomestone;
+        public RouletteCompletionData? RouletteCompletion => Snapshot.RouletteCompletion;
+        public List<RetainerMarketData> RetainerMarket => Snapshot.RetainerMarket;
+
+        // PlayTime and GcAgentProbe are deliberately NOT part of the
+        // payload: both change on every read (session seconds grow, the
+        // probe carries a read timestamp), so including them would
+        // rewrite the status file on every tick. They ride along on
+        // writes triggered by other changes and on the heartbeat.
     }
 
     public sealed class Snapshot
@@ -2396,6 +3202,11 @@ public sealed class Plugin : IDalamudPlugin
         public GrandCompanySupplyData? GrandCompanySupply { get; set; }
         public GcCaptureDebugData? GcWindowDebug { get; set; }
         public List<HousingVisitEntry> HousingVisits { get; set; } = [];
+        public WeeklyTomestoneData? WeeklyTomestone { get; set; }
+        public RouletteCompletionData? RouletteCompletion { get; set; }
+        public PlayTimeData? PlayTime { get; set; }
+        public GcAgentProbeData? GcAgentProbe { get; set; }
+        public List<RetainerMarketData> RetainerMarket { get; set; } = [];
     }
 
     public sealed class MainScenarioData
@@ -2489,6 +3300,103 @@ public sealed class Plugin : IDalamudPlugin
         public int ItemCount { get; set; }
         public int VentureId { get; set; }
         public string? VentureCompleteAt { get; set; }
+        public int MarketItemCount { get; set; }
+        public string? MarketExpireAt { get; set; }
+    }
+
+    public sealed class WeeklyTomestoneData
+    {
+        public int Acquired { get; set; }
+        public int Limit { get; set; }
+    }
+
+    public sealed class RouletteCompletionData
+    {
+        public List<int> RawValues { get; set; } = [];
+        public List<RouletteCompletionEntry> Entries { get; set; } = [];
+    }
+
+    public sealed class RouletteCompletionEntry
+    {
+        public int RouletteId { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public int? Value { get; set; }
+    }
+
+    public sealed class PlayTimeData
+    {
+        public string? SessionStartedAt { get; set; }
+        public long SessionSeconds { get; set; }
+        public long TodaySeconds { get; set; }
+        public List<PlayTimeDayEntry> Days { get; set; } = [];
+    }
+
+    public sealed class PlayTimeDayEntry
+    {
+        public string Date { get; set; } = string.Empty;
+        public long Seconds { get; set; }
+    }
+
+    public sealed class PlayTimeFile
+    {
+        public string Character { get; set; } = string.Empty;
+        public string World { get; set; } = string.Empty;
+        public string UpdatedAt { get; set; } = string.Empty;
+        public List<PlayTimeDayEntry> Days { get; set; } = [];
+    }
+
+    public sealed class GcAgentProbeData
+    {
+        public string ReadAt { get; set; } = string.Empty;
+        public bool AgentAvailable { get; set; }
+        public bool DataPresent { get; set; }
+        public List<SupplyItemEntry> Supply { get; set; } = [];
+        public List<SupplyItemEntry> Provisioning { get; set; } = [];
+        public int ItemArrayCount { get; set; }
+        public List<GcAgentItemEntry> Items { get; set; } = [];
+    }
+
+    public sealed class GcAgentItemEntry
+    {
+        public int Position { get; set; }
+        public uint ItemId { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public int NumRequested { get; set; }
+        public int NumPossessed { get; set; }
+    }
+
+    public sealed class RetainerMarketData
+    {
+        public string RetainerName { get; set; } = string.Empty;
+        public string CapturedAt { get; set; } = string.Empty;
+        public List<RetainerMarketListingEntry> Listings { get; set; } = [];
+    }
+
+    public sealed class RetainerMarketListingEntry
+    {
+        public int Slot { get; set; }
+        public uint ItemId { get; set; }
+        public string? Name { get; set; }
+        public int Count { get; set; }
+        public bool IsHq { get; set; }
+        public int Price { get; set; }
+    }
+
+    public sealed class RetainerMarketFile
+    {
+        public string Character { get; set; } = string.Empty;
+        public string World { get; set; } = string.Empty;
+        public List<RetainerMarketData> Markets { get; set; } = [];
+    }
+
+    public sealed class AlertStateFile
+    {
+        public string Character { get; set; } = string.Empty;
+        public string World { get; set; } = string.Empty;
+        public List<string> VentureAlertedKeys { get; set; } = [];
+        public bool BuddyLevelUpAlerted { get; set; }
+        public int BuddyAlertedRank { get; set; }
+        public string LastGcAlertDate { get; set; } = string.Empty;
     }
 
     public sealed class GrandCompanySupplyData
