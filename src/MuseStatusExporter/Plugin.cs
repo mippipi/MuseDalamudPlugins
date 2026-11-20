@@ -188,6 +188,12 @@ namespace MuseStatusExporter;
 /// three houses were last entered on 2026-10-31. KnownHouses is kept
 /// out of the change-detection payload for the same reason as PlayTime:
 /// the day counters change on their own.
+/// v1.15.1 corrects the entry matching: only indoor visits count (an
+/// outdoor stay on the plot, such as right after logging in there, no
+/// longer updates the last entry), the raw ward / plot values are now
+/// confirmed 0-based (displayed number = raw + 1, from the real
+/// entries of 2026-11-21), and a version-1 store is rebuilt once from
+/// the recorded indoor visits of every character.
 /// </summary>
 public sealed class Plugin : IDalamudPlugin
 {
@@ -338,8 +344,11 @@ public sealed class Plugin : IDalamudPlugin
 
     // The player's houses, with the ward / plot numbers as displayed in
     // game (1-based). Recorded visits carry the raw HousingManager
-    // values, whose base (0 or 1) is not pinned down, so matching
-    // accepts the displayed number and the displayed number minus one.
+    // values, which are 0-based (displayed number = raw + 1; confirmed
+    // against real entries on 2026-11-21), and only an indoor entry
+    // counts as entering the house: an outdoor stay on the plot (for
+    // example right after logging in at the plot) does not reset the
+    // demolition timer here (v1.15.1 correction).
     private static readonly KnownHouseDef[] KnownHouseDefs =
     [
         new("Ramuh", 22, 42, "FCハウス"),
@@ -3167,10 +3176,71 @@ public sealed class Plugin : IDalamudPlugin
                 changed = true;
             }
 
+            // One-time migration (v1.15.1): rebuild every house's last
+            // entry from the recorded indoor visits, discarding any
+            // last entry that an outdoor stay set under the old rules.
+            if (file.StoreVersion < 2)
+            {
+                RebuildKnownHouseEntries(file);
+                file.StoreVersion = 2;
+                changed = true;
+            }
+
             knownHousesCache = file;
             if (changed)
                 SaveKnownHouses(file);
             return file;
+        }
+    }
+
+    /// <summary>
+    /// Recomputes each known house's last entry as the newest recorded
+    /// indoor visit to it across every character's housing sidecar, or
+    /// the owner-confirmed baseline when no such visit exists.
+    /// </summary>
+    private void RebuildKnownHouseEntries(KnownHousesFile file)
+    {
+        var allVisits = new List<HousingVisitEntry>();
+        try
+        {
+            foreach (var path in Directory.GetFiles(configDirectory, "mstatus-housing-*.json"))
+            {
+                if (Path.GetFileName(path).Equals("mstatus-housing-known.json", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                try
+                {
+                    var visitFile = JsonSerializer.Deserialize<HousingVisitFile>(File.ReadAllText(path));
+                    if (visitFile != null)
+                        allVisits.AddRange(visitFile.Visits);
+                }
+                catch
+                {
+                    // A broken sidecar must not block the rebuild.
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to scan housing visit sidecars for the known-house rebuild.");
+        }
+
+        foreach (var def in KnownHouseDefs)
+        {
+            var entry = file.Houses.First(h => h.World == def.World && h.Ward == def.Ward && h.Plot == def.Plot);
+            var latest = allVisits
+                .Where(v => MatchesKnownHouse(v, def))
+                .OrderByDescending(v => v.At, StringComparer.Ordinal)
+                .FirstOrDefault();
+            if (latest != null)
+            {
+                entry.LastEntryAt = latest.At;
+                entry.Seeded = false;
+            }
+            else
+            {
+                entry.LastEntryAt = HousingBaselineEntryAt;
+                entry.Seeded = true;
+            }
         }
     }
 
@@ -3194,18 +3264,24 @@ public sealed class Plugin : IDalamudPlugin
     }
 
     /// <summary>
-    /// When a recorded visit matches a known house, that house's last
-    /// entry becomes the visit time. The visit carries the raw
-    /// HousingManager ward / plot, whose base (0 or 1) is not pinned
-    /// down, so both the displayed number and the displayed number
-    /// minus one are accepted.
+    /// Whether a recorded visit is an entry into a known house: the
+    /// visit must be an indoor one (an outdoor stay on the plot does
+    /// not count), and the raw HousingManager ward / plot are 0-based,
+    /// so they must equal the displayed number minus one.
+    /// </summary>
+    private static bool MatchesKnownHouse(HousingVisitEntry visit, KnownHouseDef def)
+        => visit.Kind == "Indoor"
+           && visit.World == def.World
+           && visit.Ward == def.Ward - 1
+           && visit.Plot == def.Plot - 1;
+
+    /// <summary>
+    /// When a recorded visit is an entry into a known house, that
+    /// house's last entry becomes the visit time.
     /// </summary>
     private void UpdateKnownHouseFromVisit(HousingVisitEntry visit)
     {
-        var def = KnownHouseDefs.FirstOrDefault(d =>
-            d.World == visit.World
-            && (visit.Ward == d.Ward || visit.Ward == d.Ward - 1)
-            && (visit.Plot == d.Plot || visit.Plot == d.Plot - 1));
+        var def = KnownHouseDefs.FirstOrDefault(d => MatchesKnownHouse(visit, d));
         if (def == null)
             return;
 
@@ -3790,6 +3866,10 @@ public sealed class Plugin : IDalamudPlugin
 
     public sealed class KnownHousesFile
     {
+        // Store format version. Version 2 stores are (re)built from the
+        // recorded indoor visits only (v1.15.1); version 1 stores could
+        // carry a last entry set by an outdoor stay on a plot.
+        public int StoreVersion { get; set; }
         public List<KnownHouseState> Houses { get; set; } = [];
     }
 

@@ -90,7 +90,7 @@ This document describes everything another plugin or tool needs to connect to th
 - `Inventory[]`: `{ Container, Items }`、`Items[]`: `{ ItemId, Name, Count, IsHq }`
 - `Retainers[]`: `{ Name, ClassJob, Level, Gil, ItemCount, VentureId, VentureCompleteAt, MarketItemCount, MarketExpireAt }`（ベンチャー未出発時は VentureId = 0。MarketItemCount / MarketExpireAt は v1.14.0 以降）
 - `GrandCompanySupply`: `{ Supply, Provisioning }`、各要素 `{ ItemId, Name, NumRequested }`（その日のリクエスト。当日分が未取得の間は前回取得分が残る）
-- `HousingVisits[]`: `{ At, World, Kind, Ward, Plot, Room }`（Ward / Plot はプラグイン内部の生値で、表示上の区・番地と 1 ずれる場合がある）
+- `HousingVisits[]`: `{ At, World, Kind, Ward, Plot, Room }`（Ward / Plot はプラグイン内部の生値（0始まり）で、表示上の区・番地は生値+1。2026-11-21 に実データで確認。Kind は "Indoor"（屋内）／"Outdoor"（屋外）で、ハウスへの入室として数えるのは Indoor のみ）
 - `KnownHouses[]`: `{ World, Ward, Plot, Kind, LastEntryAt, DaysSinceEntry, DemolitionDate, DaysUntilDemolition }`（Ward / Plot は表示上の番号。DemolitionDate は最終入室の45日後、DaysUntilDemolition は撤去予定日までの残り日数。最終入室が未記録の場合は LastEntryAt 以外の各値が null）
 - `MainScenario`: `{ CurrentQuestId, CurrentQuestName, NextQuestId, NextQuestName, LastCompletedQuestId, LastCompletedQuestName, CurrentExpansion, CompletedQuests, TotalQuests, AllComplete, Expansions }`、`Expansions[]`: `{ ExpansionId, Name, CompletedQuests, TotalQuests }`
 - `FateProgress[]`: `{ TabIndex, TerritoryTypeId, ZoneName, DisplayOrder, CurrentRank, MaxRank, FateProgress, NeededFates }`（FateProgress は最大ランクまでの累計達成数（総数 66）、NeededFates は次ランクまでの残り件数。v1.12.4 以降の正規化済みの値）
@@ -295,7 +295,7 @@ Section shapes:
 - `Inventory[]`: `{ Container, Items }`, with `Items[]`: `{ ItemId, Name, Count, IsHq }`
 - `Retainers[]`: `{ Name, ClassJob, Level, Gil, ItemCount, VentureId, VentureCompleteAt, MarketItemCount, MarketExpireAt }` (VentureId is 0 when no venture is running; MarketItemCount / MarketExpireAt exist since v1.14.0)
 - `GrandCompanySupply`: `{ Supply, Provisioning }`, each item `{ ItemId, Name, NumRequested }` (the current day's requests; until a new day's list is captured, the last captured list remains)
-- `HousingVisits[]`: `{ At, World, Kind, Ward, Plot, Room }` (Ward / Plot are the plugin's raw values and may be off by one from the displayed ward/plot numbers)
+- `HousingVisits[]`: `{ At, World, Kind, Ward, Plot, Room }` (Ward / Plot are the plugin's raw 0-based values; the displayed ward/plot numbers are raw + 1, confirmed against real data on 2026-11-21. Kind is "Indoor" or "Outdoor"; only Indoor counts as entering a house)
 - `KnownHouses[]`: `{ World, Ward, Plot, Kind, LastEntryAt, DaysSinceEntry, DemolitionDate, DaysUntilDemolition }` (Ward / Plot are the displayed numbers; DemolitionDate is 45 days after the last entry and DaysUntilDemolition the days left until it; when no entry is recorded, every value except LastEntryAt is null)
 - `MainScenario`: `{ CurrentQuestId, CurrentQuestName, NextQuestId, NextQuestName, LastCompletedQuestId, LastCompletedQuestName, CurrentExpansion, CompletedQuests, TotalQuests, AllComplete, Expansions }`, with `Expansions[]`: `{ ExpansionId, Name, CompletedQuests, TotalQuests }`
 - `FateProgress[]`: `{ TabIndex, TerritoryTypeId, ZoneName, DisplayOrder, CurrentRank, MaxRank, FateProgress, NeededFates }` (FateProgress is the cumulative completed count toward the max rank, 66 total; NeededFates is the remainder to the next rank. These are the normalized values used since v1.12.4)
