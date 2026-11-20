@@ -44,6 +44,10 @@ FFXIV の Dalamud 用カスタムプラグイン リポジトリです。プラ�
 
 ソースコード: [`src/MuseStatusExporter`](src/MuseStatusExporter)
 
+### 他のプラグイン・ツールとの連携
+
+他のプラグインやツールがこの仕組みに接続するためのインターフェース仕様（ステータス JSON の形式、設定ダウンリンクのプロトコル、トランスポートの契約）を [連携仕様（docs/INTEGRATION.md）](docs/INTEGRATION.md) に公開しています。
+
 ### 付属アップローダー（uploader/）
 
 `uploader/` フォルダには、Muse Status Exporter と対になる Windows PowerShell 製アップローダーが入っています。プラグインが出力したキャラ別ステータス JSON、テル記録、プラグイン設定の軽量スナップショットを Google Drive へ送信し、Muse から送られる設定ファイルをプラグインへ届けます。セットアップ方法は `uploader/README.md` を参照してください。これらのスクリプト自体に認証情報は含まれていません（Google のリフレッシュトークンは DPAPI で暗号化されたローカルファイルにのみ保存されます）。
@@ -102,6 +106,10 @@ class/job below the level cap is active. Every feature has its own
 checkbox in the plugin's settings window.
 
 Source code: [`src/MuseStatusExporter`](src/MuseStatusExporter)
+
+### Integrating other plugins and tools
+
+The interface specification for connecting other plugins and tools to this system (the status JSON format, the config downlink protocol, and the transport contract) is published in the [integration spec (docs/INTEGRATION.md)](docs/INTEGRATION.md).
 
 ### Companion uploader (uploader/)
 
