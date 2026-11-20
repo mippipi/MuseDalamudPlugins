@@ -211,6 +211,12 @@ namespace MuseStatusExporter;
 /// log whenever a qualified entry advances it, with the house's new
 /// demolition date (marked as unverified while the house's ownership
 /// has not been learned yet).
+/// v1.18.0 warns in the chat log (and in the login summary) when an
+/// equipped item's durability runs low - the durability values
+/// themselves have been recorded in the Equipped section since the
+/// gear export - and folds the other characters' completed retainer
+/// ventures into the login summary, read from their latest status
+/// files in the same config folder.
 /// </summary>
 public sealed class Plugin : IDalamudPlugin
 {
@@ -352,6 +358,7 @@ public sealed class Plugin : IDalamudPlugin
     // account) on this machine, because the houses belong to the player,
     // not to the character that happens to visit them.
     private bool loginSummaryPending;
+    private bool durabilityWarned;
     private DateTime loginSummaryRequestedUtc = DateTime.MinValue;
     private Snapshot? lastBuiltSnapshot;
     private readonly object knownHousingLock = new();
@@ -375,6 +382,8 @@ public sealed class Plugin : IDalamudPlugin
 
     private const int HousingDemolitionDays = 45;
     private const int HousingWarningDays = 7;
+    private const int DurabilityWarningThreshold = 30;
+    private const int DurabilityRearmThreshold = 50;
 
     // Owner-confirmed baseline: all three houses were last entered on
     // this date (stated by the owner on 2026-10-31). Used only to seed
@@ -778,6 +787,7 @@ public sealed class Plugin : IDalamudPlugin
 
         TryExport(force: false);
         CheckAlerts();
+        CheckDurabilityWarning();
         TryPrintLoginSummary();
     }
 
@@ -2572,6 +2582,59 @@ public sealed class Plugin : IDalamudPlugin
         }
     }
 
+    /// <summary>
+    /// Finds the equipped item with the lowest durability (Condition is
+    /// already an integer percent in the snapshot).
+    /// </summary>
+    private static GearItemEntry? FindLowestConditionItem(EquippedData equipped)
+    {
+        GearItemEntry? lowest = null;
+        foreach (var item in equipped.Items)
+            if (lowest == null || item.Condition < lowest.Condition)
+                lowest = item;
+        return lowest;
+    }
+
+    /// <summary>
+    /// Warns in the chat log when an equipped item's durability runs
+    /// low (v1.18.0). The durability itself has been recorded in the
+    /// snapshot's Equipped section since the gear export; this adds
+    /// the warning. Fires once per drop below the threshold and
+    /// re-arms once a repair raises the lowest item again.
+    /// </summary>
+    private void CheckDurabilityWarning()
+    {
+        if (!configuration.InGameAlerts || !configuration.DurabilityWarning)
+            return;
+
+        try
+        {
+            var snapshot = lastBuiltSnapshot;
+            if (snapshot?.Equipped == null)
+                return;
+            var lowest = FindLowestConditionItem(snapshot.Equipped);
+            if (lowest == null)
+                return;
+
+            if (lowest.Condition < DurabilityWarningThreshold)
+            {
+                if (!durabilityWarned)
+                {
+                    durabilityWarned = true;
+                    ChatGui.Print($"[Muse Status Exporter] 装備の耐久度が低下しています: {lowest.Name} {lowest.Condition}%（修理をおすすめします）");
+                }
+            }
+            else if (lowest.Condition >= DurabilityRearmThreshold)
+            {
+                durabilityWarned = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to check the durability warning.");
+        }
+    }
+
     private unsafe void CheckVentureAlerts(string character, string world)
     {
         var manager = RetainerManager.Instance();
@@ -3632,6 +3695,8 @@ public sealed class Plugin : IDalamudPlugin
             lines.AddRange(BuildStatusSummaryLines(snapshot));
         if (configuration.HousingDeadlineNotice)
             lines.AddRange(BuildHousingSummaryLines());
+        if (configuration.LoginSummary && configuration.CrossCharacterSummary)
+            lines.AddRange(BuildCrossCharacterSummaryLines());
 
         if (lines.Count == 0)
             return;
@@ -3705,6 +3770,78 @@ public sealed class Plugin : IDalamudPlugin
             lines.Add(remaining > 0
                 ? $"週間トームストーン: {snapshot.WeeklyTomestone.Acquired} / {snapshot.WeeklyTomestone.Limit}（残り {remaining}）"
                 : $"週間トームストーン: {snapshot.WeeklyTomestone.Acquired} / {snapshot.WeeklyTomestone.Limit}（上限に達しています）");
+        }
+
+        // Equipment durability: a line only when the lowest equipped
+        // item is low (v1.18.0; the values themselves ride along in
+        // the snapshot's Equipped section).
+        if (configuration.DurabilityWarning && snapshot.Equipped != null)
+        {
+            var lowest = FindLowestConditionItem(snapshot.Equipped);
+            if (lowest != null && lowest.Condition < DurabilityWarningThreshold)
+                lines.Add($"装備耐久度: 最低 {lowest.Name} {lowest.Condition}%（修理をおすすめします）");
+        }
+
+        return lines;
+    }
+
+    /// <summary>
+    /// Summarizes the OTHER characters on this machine from their
+    /// latest status files in the same config folder (v1.18.0):
+    /// retainer ventures that have completed and are waiting to be
+    /// collected. A character whose file is stale has not been logged
+    /// in since, so a venture recorded as completed there is still
+    /// uncollected in the game. Housing deadlines are already shared
+    /// through the known-houses store, so they are not repeated here.
+    /// </summary>
+    private List<string> BuildCrossCharacterSummaryLines()
+    {
+        var lines = new List<string>();
+        try
+        {
+            var ownFile = lastBuiltSnapshot == null
+                ? null
+                : $"ffxiv-status-{SanitizeFilePart(lastBuiltSnapshot.Character)}-{SanitizeFilePart(lastBuiltSnapshot.World)}.json";
+            var now = DateTimeOffset.Now;
+            var others = new List<(string Character, string World, int Completed)>();
+            foreach (var path in Directory.GetFiles(configDirectory, "ffxiv-status-*.json"))
+            {
+                if (ownFile != null
+                    && string.Equals(Path.GetFileName(path), ownFile, StringComparison.OrdinalIgnoreCase))
+                    continue;
+                try
+                {
+                    var other = JsonSerializer.Deserialize<Snapshot>(File.ReadAllText(path), JsonOptions);
+                    if (other == null)
+                        continue;
+                    var completed = 0;
+                    foreach (var retainer in other.Retainers)
+                    {
+                        if (retainer.VentureId == 0 || retainer.VentureCompleteAt == null)
+                            continue;
+                        if (DateTimeOffset.TryParse(retainer.VentureCompleteAt, out var completeAt) && completeAt <= now)
+                            completed++;
+                    }
+
+                    if (completed > 0)
+                        others.Add((other.Character, other.World, completed));
+                }
+                catch
+                {
+                    // A file that cannot be read (being written right
+                    // now, or an older format) is skipped; the summary
+                    // stays best-effort.
+                }
+            }
+
+            foreach (var other in others
+                         .OrderBy(o => o.Character, StringComparer.Ordinal)
+                         .ThenBy(o => o.World, StringComparer.Ordinal))
+                lines.Add($"他キャラ {other.Character}（{other.World}）: ベンチャー完了 {other.Completed} 件");
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to build the cross-character summary.");
         }
 
         return lines;

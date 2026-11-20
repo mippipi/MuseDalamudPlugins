@@ -2,7 +2,7 @@
 <Project Sdk="Dalamud.NET.Sdk/15.0.0">
 
 	<PropertyGroup>
-		<Version>1.17.0</Version>
+		<Version>1.18.0</Version>
 		<Authors>Muse</Authors>
 		<Description>Exports the logged-in character's job levels, Cosmic Exploration progress, gearsets and equipped items to a JSON file.</Description>
 		<RootNamespace>MuseStatusExporter</RootNamespace>

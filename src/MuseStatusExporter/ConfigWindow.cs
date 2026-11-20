@@ -75,6 +75,10 @@ public sealed class ConfigWindow : Window
             () => configuration.ExportFreeCompany, v => configuration.ExportFreeCompany = v);
         DrawCheckbox("資格のある入室でハウスの最終入室が更新されたら知らせる",
             () => configuration.HousingEntryNotice, v => configuration.HousingEntryNotice = v);
+        DrawCheckbox("装備の耐久度が低下したら知らせる",
+            () => configuration.DurabilityWarning, v => configuration.DurabilityWarning = v);
+        DrawCheckbox("ログインサマリーに他キャラのベンチャー完了をまとめる",
+            () => configuration.CrossCharacterSummary, v => configuration.CrossCharacterSummary = v);
     }
 
     private void DrawCheckbox(string label, Func<bool> get, Action<bool> set)

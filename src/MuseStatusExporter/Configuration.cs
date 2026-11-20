@@ -80,5 +80,11 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Print a chat notice when a qualified entry updates a known house's last entry and demolition date (v1.17.0).</summary>
     public bool HousingEntryNotice { get; set; } = true;
 
+    /// <summary>Warn in chat and in the login summary when an equipped item's durability is low (v1.18.0).</summary>
+    public bool DurabilityWarning { get; set; } = true;
+
+    /// <summary>Include other characters' completed retainer ventures in the login summary (v1.18.0).</summary>
+    public bool CrossCharacterSummary { get; set; } = true;
+
     public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
 }
