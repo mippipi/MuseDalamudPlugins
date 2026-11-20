@@ -18,9 +18,12 @@ using Dalamud.IoC;
 using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
+using FFXIVClientStructs.FFXIV.Client.Game.Character;
+using FFXIVClientStructs.FFXIV.Client.Game.Network;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using FFXIVClientStructs.FFXIV.Client.Game.WKS;
 using FFXIVClientStructs.FFXIV.Client.UI.Agent;
+using FFXIVClientStructs.FFXIV.Client.UI.Info;
 using FFXIVClientStructs.FFXIV.Client.UI.Misc;
 using FFXIVClientStructs.FFXIV.Component.GUI;
 using Lumina.Excel.Sheets;
@@ -194,6 +197,16 @@ namespace MuseStatusExporter;
 /// confirmed 0-based (displayed number = raw + 1, from the real
 /// entries of 2026-11-21), and a version-1 store is rebuilt once from
 /// the recorded indoor visits of every character.
+/// v1.16.0 qualifies entries by ownership. A hook on
+/// AgentHousingSignboard.ReadPacket learns each known house's
+/// ownership (owner name, FC tag) whenever its placard is viewed.
+/// Once ownership is learned, a personal house's last entry advances
+/// only when the owner enters, and an FC house's only when a member
+/// of the owning FC enters (the visitor's FC name / tag is read at
+/// entry time). A last entry that predates the ownership check is
+/// marked unverified and shown as such （所有者未確認）. The snapshot
+/// also records the logged-in character's Free Company (id, name,
+/// tag) whenever it can be read.
 /// </summary>
 public sealed class Plugin : IDalamudPlugin
 {
@@ -397,6 +410,14 @@ public sealed class Plugin : IDalamudPlugin
     private unsafe delegate void ReceiveAchievementProgressDelegate(Achievement* thisPtr, uint id, uint current, uint max);
 
     private Hook<ReceiveAchievementProgressDelegate>? achievementProgressHook;
+
+    // Signboard capture (v1.16.0): AgentHousingSignboard.ReadPacket
+    // receives the placard data (house id, owner name, FC tag) whenever
+    // a house's placard is viewed; hooking it learns the known houses'
+    // ownership for the entry qualification.
+    private unsafe delegate void SignboardReadPacketDelegate(AgentHousingSignboard* thisPtr, HousingSignboardPacket* packet);
+
+    private Hook<SignboardReadPacketDelegate>? signboardHook;
     private readonly object fateAchievementLock = new();
     private readonly Dictionary<uint, (uint Current, uint Max)> fateAchievementProgress = new();
     private readonly Dictionary<uint, string> fateZoneNameCache = new();
@@ -460,6 +481,8 @@ public sealed class Plugin : IDalamudPlugin
         // plugin's requests. Failing to hook only disables this capture
         // path; the AgentFateProgress read keeps working as before.
         SetupAchievementProgressHook();
+        if (configuration.LearnHousingOwnership)
+            SetupSignboardHook();
 
         // A plugin (re)load while already logged in never sees OnLogin,
         // so request the login summary here as well (v1.15.0).
@@ -493,6 +516,29 @@ public sealed class Plugin : IDalamudPlugin
         }
     }
 
+    private unsafe void SetupSignboardHook()
+    {
+        try
+        {
+            var address = AgentHousingSignboard.Addresses.ReadPacket.Value;
+            if (address != nint.Zero)
+            {
+                signboardHook = GameInteropProvider.HookFromAddress<SignboardReadPacketDelegate>(
+                    address, OnSignboardReadPacket);
+                signboardHook.Enable();
+            }
+            else
+            {
+                Log.Warning("AgentHousingSignboard.ReadPacket is not resolved; housing ownership learning is disabled.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to hook AgentHousingSignboard.ReadPacket; housing ownership learning is disabled.");
+            signboardHook = null;
+        }
+    }
+
     public void Dispose()
     {
         PluginInterface.UiBuilder.Draw -= windowSystem.Draw;
@@ -515,6 +561,10 @@ public sealed class Plugin : IDalamudPlugin
         achievementProgressHook?.Disable();
         achievementProgressHook?.Dispose();
         achievementProgressHook = null;
+
+        signboardHook?.Disable();
+        signboardHook?.Dispose();
+        signboardHook = null;
     }
 
     private void OnLogin()
@@ -1281,6 +1331,26 @@ public sealed class Plugin : IDalamudPlugin
     }
 
     /// <summary>
+    /// Detour for AgentHousingSignboard.ReadPacket (v1.16.0): when a
+    /// known house's placard is viewed, learns its ownership from the
+    /// packet (owner name, FC tag). The original always runs first and
+    /// nothing in here may throw into the game function.
+    /// </summary>
+    private unsafe void OnSignboardReadPacket(AgentHousingSignboard* thisPtr, HousingSignboardPacket* packet)
+    {
+        signboardHook!.Original(thisPtr, packet);
+
+        try
+        {
+            CaptureSignboardOwnership(packet);
+        }
+        catch
+        {
+            // Learning is best-effort; never break the game function.
+        }
+    }
+
+    /// <summary>
     /// Asks the server for the shared FATE progress (v1.12.2), the same
     /// requests Auto FATE Grind issues: the per-tab FATE progress request
     /// (which also feeds AgentFateProgress) plus main command 1000 for
@@ -1838,7 +1908,37 @@ public sealed class Plugin : IDalamudPlugin
             Log.Warning(ex, "Failed to read retainer market listings.");
         }
 
+        // ---- Free Company of the logged-in character (v1.16.0) -------------------
+        try
+        {
+            if (configuration.ExportFreeCompany)
+                snapshot.FreeCompany = BuildFreeCompany();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to read the character's Free Company.");
+        }
+
         return snapshot;
+    }
+
+    /// <summary>
+    /// The logged-in character's Free Company (v1.16.0): id and name
+    /// from the FC info proxy, tag from the character's own spawn
+    /// data. Null when nothing is readable (no FC, or the client does
+    /// not hold the data yet).
+    /// </summary>
+    private unsafe FreeCompanyData? BuildFreeCompany()
+    {
+        var (id, name, tag) = ReadFreeCompanyInfo();
+        if (id == 0 && name.Length == 0 && tag.Length == 0)
+            return null;
+        return new FreeCompanyData
+        {
+            Id = id,
+            Name = name.Length > 0 ? name : null,
+            Tag = tag.Length > 0 ? tag : null,
+        };
     }
 
     /// <summary>
@@ -3044,11 +3144,18 @@ public sealed class Plugin : IDalamudPlugin
                 if (!isDuplicate)
                 {
                     current.At = DateTimeOffset.Now.ToString("o");
+                    // The visitor's FC at entry time, for the known
+                    // houses' ownership qualification (v1.16.0).
+                    var (fcName, fcTag) = ReadVisitorFreeCompany();
+                    current.VisitorFcName = fcName.Length > 0 ? fcName : null;
+                    current.VisitorFcTag = fcTag.Length > 0 ? fcTag : null;
                     visits.Add(current);
                     if (visits.Count > MaxHousingVisitEntries)
                         visits.RemoveRange(0, visits.Count - MaxHousingVisitEntries);
+                    // Qualification runs before the save so the visit
+                    // record itself carries its outcome.
+                    UpdateKnownHouseFromVisit(current, character);
                     SaveHousingVisits(character, world, visits);
-                    UpdateKnownHouseFromVisit(current);
                 }
             }
 
@@ -3186,6 +3293,17 @@ public sealed class Plugin : IDalamudPlugin
                 changed = true;
             }
 
+            // v1.16.0: ownership fields start empty (learned from
+            // placards), and every last entry that predates the
+            // ownership check is unverified by definition - the
+            // deserialized default already says so; this only advances
+            // the store format.
+            if (file.StoreVersion < 3)
+            {
+                file.StoreVersion = 3;
+                changed = true;
+            }
+
             knownHousesCache = file;
             if (changed)
                 SaveKnownHouses(file);
@@ -3241,6 +3359,8 @@ public sealed class Plugin : IDalamudPlugin
                 entry.LastEntryAt = HousingBaselineEntryAt;
                 entry.Seeded = true;
             }
+            // Rebuilt entries predate the ownership check (v1.16.0).
+            entry.LastEntryVerified = false;
         }
     }
 
@@ -3276,10 +3396,35 @@ public sealed class Plugin : IDalamudPlugin
            && visit.Plot == def.Plot - 1;
 
     /// <summary>
-    /// When a recorded visit is an entry into a known house, that
-    /// house's last entry becomes the visit time.
+    /// Whether an entry into a known house counts towards its
+    /// demolition timer (v1.16.0). Before the house's ownership has
+    /// been learned from its placard, an entry cannot be checked and
+    /// is accepted (the house's last entry is then shown as
+    /// unverified). Once ownership is known: a personal house counts
+    /// only its owner's entry; an FC house counts only an entry by a
+    /// member of the owning FC, matched by the visitor's FC name
+    /// (preferred) or FC tag.
     /// </summary>
-    private void UpdateKnownHouseFromVisit(HousingVisitEntry visit)
+    private static bool IsQualifiedEntry(KnownHouseState entry, HousingVisitEntry visit, string visitorName)
+    {
+        if (entry.OwnerKind == null)
+            return true;
+        if (entry.OwnerKind == "Player")
+            return visitorName == entry.OwnerName;
+        if (!string.IsNullOrEmpty(visit.VisitorFcName) && visit.VisitorFcName == entry.OwnerName)
+            return true;
+        if (!string.IsNullOrEmpty(visit.VisitorFcTag) && !string.IsNullOrEmpty(entry.OwnerFcTag)
+            && visit.VisitorFcTag == entry.OwnerFcTag)
+            return true;
+        return false;
+    }
+
+    /// <summary>
+    /// When a recorded visit is a qualified entry into a known house,
+    /// that house's last entry becomes the visit time. The visit
+    /// record itself is stamped with the qualification outcome.
+    /// </summary>
+    private void UpdateKnownHouseFromVisit(HousingVisitEntry visit, string visitorName)
     {
         var def = KnownHouseDefs.FirstOrDefault(d => MatchesKnownHouse(visit, d));
         if (def == null)
@@ -3289,10 +3434,119 @@ public sealed class Plugin : IDalamudPlugin
         {
             var file = LoadKnownHouses();
             var entry = file.Houses.First(h => h.World == def.World && h.Ward == def.Ward && h.Plot == def.Plot);
+            var qualified = IsQualifiedEntry(entry, visit, visitorName);
+            visit.EntryQualified = qualified;
+            if (!qualified)
+                return;
+            if (entry.LastEntryAt != null
+                && DateTimeOffset.TryParse(entry.LastEntryAt, out var currentLast)
+                && DateTimeOffset.TryParse(visit.At, out var visitAt)
+                && visitAt <= currentLast)
+                return;
             entry.LastEntryAt = visit.At;
             entry.Seeded = false;
+            entry.LastEntryVerified = entry.OwnerKind != null;
             SaveKnownHouses(file);
         }
+    }
+
+    /// <summary>
+    /// The current character's Free Company id, name and tag. The id
+    /// and name come from the FC info proxy (empty until the client
+    /// holds FC data), the tag from the character's own spawn data.
+    /// </summary>
+    private unsafe (ulong Id, string Name, string Tag) ReadFreeCompanyInfo()
+    {
+        var id = 0UL;
+        var name = string.Empty;
+        var tag = string.Empty;
+        try
+        {
+            var proxy = InfoProxyFreeCompany.Instance();
+            if (proxy != null && proxy->Id != 0)
+            {
+                id = proxy->Id;
+                name = proxy->NameString?.Trim() ?? string.Empty;
+            }
+        }
+        catch
+        {
+            // Best effort only.
+        }
+
+        try
+        {
+            var player = ObjectTable.LocalPlayer;
+            if (player != null)
+            {
+                var chara = (BattleChara*)player.Address;
+                tag = chara->FreeCompanyTagString?.Trim() ?? string.Empty;
+            }
+        }
+        catch
+        {
+            // Best effort only.
+        }
+
+        return (id, name, tag);
+    }
+
+    /// <summary>
+    /// The current character's Free Company name and tag, read at
+    /// entry time for the ownership qualification.
+    /// </summary>
+    private unsafe (string Name, string Tag) ReadVisitorFreeCompany()
+    {
+        var (_, name, tag) = ReadFreeCompanyInfo();
+        return (name, tag);
+    }
+
+    /// <summary>
+    /// Learns a known house's ownership from its placard packet
+    /// (v1.16.0): the owner name and FC tag the client receives when
+    /// the placard is viewed. An FC tag in the packet means the house
+    /// belongs to a Free Company (owner name = FC name); without one
+    /// it is a personal house (owner name = the owner's name).
+    /// </summary>
+    private unsafe void CaptureSignboardOwnership(HousingSignboardPacket* packet)
+    {
+        if (packet == null)
+            return;
+        var houseId = packet->HouseId;
+        if (houseId.WorldId == 0)
+            return;
+        var world = ResolveWorldName(houseId.WorldId);
+        if (world.Length == 0)
+            return;
+        var def = KnownHouseDefs.FirstOrDefault(d => d.World == world
+            && d.Ward - 1 == houseId.WardIndex
+            && d.Plot - 1 == houseId.PlotIndex);
+        if (def == null)
+            return;
+
+        var ownerName = packet->OwnerNameString?.Trim() ?? string.Empty;
+        var fcTag = packet->FCTagString?.Trim() ?? string.Empty;
+        if (ownerName.Length == 0)
+            return;
+        var ownerKind = fcTag.Length > 0 ? "FreeCompany" : "Player";
+
+        lock (knownHousingLock)
+        {
+            var file = LoadKnownHouses();
+            var entry = file.Houses.First(h => h.World == def.World && h.Ward == def.Ward && h.Plot == def.Plot);
+            if (entry.OwnerKind == ownerKind && entry.OwnerName == ownerName && entry.OwnerFcTag == fcTag)
+                return;
+            entry.OwnerKind = ownerKind;
+            entry.OwnerName = ownerName;
+            entry.OwnerFcTag = fcTag;
+            entry.OwnershipLearnedAt = DateTimeOffset.Now.ToString("o");
+            SaveKnownHouses(file);
+        }
+
+        ChatGui.Print(ownerKind == "FreeCompany"
+            ? $"[Muse Status Exporter] ハウスの所有情報を学習しました: {def.World} 第{def.Ward}区{def.Plot}番地（FC「{ownerName}」）"
+            : $"[Muse Status Exporter] ハウスの所有情報を学習しました: {def.World} 第{def.Ward}区{def.Plot}番地（所有者 {ownerName}）");
+        TryExport(force: true);
     }
 
     private List<KnownHouseStatusEntry> BuildKnownHouseStatuses()
@@ -3310,6 +3564,12 @@ public sealed class Plugin : IDalamudPlugin
                 Kind = def.Kind,
             };
             var entry = file.Houses.FirstOrDefault(h => h.World == def.World && h.Ward == def.Ward && h.Plot == def.Plot);
+            if (entry != null)
+            {
+                status.OwnerKind = entry.OwnerKind;
+                status.OwnerName = entry.OwnerName;
+                status.OwnerFcTag = entry.OwnerFcTag;
+            }
             if (entry?.LastEntryAt != null && DateTimeOffset.TryParse(entry.LastEntryAt, out var lastEntry))
             {
                 var lastDate = lastEntry.Date;
@@ -3318,6 +3578,7 @@ public sealed class Plugin : IDalamudPlugin
                 status.DaysSinceEntry = Math.Max(0, (today - lastDate).Days);
                 status.DemolitionDate = demolition.ToString("yyyy-MM-dd");
                 status.DaysUntilDemolition = (demolition - today).Days;
+                status.LastEntryUnverified = !entry.LastEntryVerified;
             }
             result.Add(status);
         }
@@ -3443,7 +3704,10 @@ public sealed class Plugin : IDalamudPlugin
                 continue;
             }
 
-            lines.Add($"{place}: 最終入室から {house.DaysSinceEntry} 日、撤去予定日 {house.DemolitionDate}（あと {house.DaysUntilDemolition} 日）");
+            var entryLine = $"{place}: 最終入室から {house.DaysSinceEntry} 日、撤去予定日 {house.DemolitionDate}（あと {house.DaysUntilDemolition} 日）";
+            if (house.LastEntryUnverified)
+                entryLine += "（所有者未確認）";
+            lines.Add(entryLine);
             if (house.DaysUntilDemolition < 0)
                 lines.Add($"【警告】{place} は撤去予定日（{house.DemolitionDate}）を過ぎています");
             else if (house.DaysUntilDemolition <= HousingWarningDays)
@@ -3597,6 +3861,7 @@ public sealed class Plugin : IDalamudPlugin
         public WeeklyTomestoneData? WeeklyTomestone => Snapshot.WeeklyTomestone;
         public RouletteCompletionData? RouletteCompletion => Snapshot.RouletteCompletion;
         public List<RetainerMarketData> RetainerMarket => Snapshot.RetainerMarket;
+        public FreeCompanyData? FreeCompany => Snapshot.FreeCompany;
 
         // PlayTime and GcAgentProbe are deliberately NOT part of the
         // payload: both change on every read (session seconds grow, the
@@ -3635,6 +3900,14 @@ public sealed class Plugin : IDalamudPlugin
         public PlayTimeData? PlayTime { get; set; }
         public GcAgentProbeData? GcAgentProbe { get; set; }
         public List<RetainerMarketData> RetainerMarket { get; set; } = [];
+        public FreeCompanyData? FreeCompany { get; set; }
+    }
+
+    public sealed class FreeCompanyData
+    {
+        public ulong Id { get; set; }
+        public string? Name { get; set; }
+        public string? Tag { get; set; }
     }
 
     public sealed class MainScenarioData
@@ -3868,7 +4141,8 @@ public sealed class Plugin : IDalamudPlugin
     {
         // Store format version. Version 2 stores are (re)built from the
         // recorded indoor visits only (v1.15.1); version 1 stores could
-        // carry a last entry set by an outdoor stay on a plot.
+        // carry a last entry set by an outdoor stay on a plot. Version
+        // 3 stores carry the houses' learned ownership (v1.16.0).
         public int StoreVersion { get; set; }
         public List<KnownHouseState> Houses { get; set; } = [];
     }
@@ -3881,6 +4155,20 @@ public sealed class Plugin : IDalamudPlugin
         public string Kind { get; set; } = string.Empty;
         public string? LastEntryAt { get; set; }
         public bool Seeded { get; set; }
+
+        // Ownership learned from the house's placard (v1.16.0): null
+        // OwnerKind until learned. OwnerKind is "Player" (personal
+        // house, OwnerName = the owner's character name) or
+        // "FreeCompany" (OwnerName = the FC name, OwnerFcTag its tag).
+        public string? OwnerKind { get; set; }
+        public string? OwnerName { get; set; }
+        public string? OwnerFcTag { get; set; }
+        public string? OwnershipLearnedAt { get; set; }
+
+        // Whether the current last entry passed the ownership check.
+        // Entries from before the ownership was learned (including the
+        // seeded baseline) are unverified and shown as such.
+        public bool LastEntryVerified { get; set; }
     }
 
     public sealed class KnownHouseStatusEntry
@@ -3893,6 +4181,10 @@ public sealed class Plugin : IDalamudPlugin
         public int? DaysSinceEntry { get; set; }
         public string? DemolitionDate { get; set; }
         public int? DaysUntilDemolition { get; set; }
+        public string? OwnerKind { get; set; }
+        public string? OwnerName { get; set; }
+        public string? OwnerFcTag { get; set; }
+        public bool LastEntryUnverified { get; set; }
     }
 
     public sealed class HousingVisitEntry
@@ -3903,6 +4195,13 @@ public sealed class Plugin : IDalamudPlugin
         public int Ward { get; set; }
         public int Plot { get; set; }
         public int Room { get; set; }
+
+        // The visitor's Free Company at entry time (v1.16.0), and -
+        // for visits that match a known house - whether the entry
+        // counted towards that house's demolition timer.
+        public string? VisitorFcName { get; set; }
+        public string? VisitorFcTag { get; set; }
+        public bool? EntryQualified { get; set; }
 
         [JsonIgnore]
         public string Key => $"{World}|{Kind}|{Ward}|{Plot}|{Room}";

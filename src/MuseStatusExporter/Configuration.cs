@@ -71,5 +71,11 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Show each known house's days since last entry and demolition date on login, with a warning when demolition is near.</summary>
     public bool HousingDeadlineNotice { get; set; } = true;
 
+    /// <summary>Learn each known house's ownership (owner / FC) when its placard is viewed, so only the owner's or an FC member's entry advances the last entry (v1.16.0).</summary>
+    public bool LearnHousingOwnership { get; set; } = true;
+
+    /// <summary>Record the logged-in character's Free Company (id, name, tag) in the snapshot (v1.16.0).</summary>
+    public bool ExportFreeCompany { get; set; } = true;
+
     public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
 }

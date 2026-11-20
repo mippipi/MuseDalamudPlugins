@@ -36,7 +36,8 @@ FFXIV の Dalamud 用カスタムプラグイン リポジトリです。プラ�
 - 通貨、インベントリ、リテイナーのベンチャー状態
 - GC軍需品／調達品のリクエスト（アドオンの AtkValues から取得）
 - ハウスへの入室履歴
-- 既知のハウスの最終入室日と撤去予定日（最終入室の45日後）
+- 既知のハウスの最終入室日と撤去予定日（最終入室の45日後。看板から学習した所有情報で、所有者／FCメンバーの入室だけを反映）
+- ログイン中のキャラクターのFC（ID・名前・タグ）
 - メインクエストの進行状況
 - 全18エリアの共有FATE達成度（Auto FATE Grind と同じ方式でサーバーへ能動取得するため、FATEウィンドウを開く必要はありません）
 - バディ（チョコボ）のランクと経験値、レベルアップ可能かどうかの判定
@@ -96,7 +97,8 @@ plugin's config folder:
 - Currencies, inventory containers, retainer venture state
 - Grand Company supply/provisioning requests (read from the addons' AtkValues)
 - Housing visit history
-- Last entry and demolition date (45 days after the last entry) of the known houses
+- Last entry and demolition date (45 days after the last entry) of the known houses (only the owner's / an FC member's entry counts, using the ownership learned from each house's placard)
+- The logged-in character's Free Company (id, name, tag)
 - Main scenario quest progress
 - Shared FATE progress for all 18 zones (requested from the server,
   Auto FATE Grind style — no need to open the FATE window)

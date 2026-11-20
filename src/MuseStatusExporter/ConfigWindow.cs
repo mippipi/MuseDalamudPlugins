@@ -69,6 +69,10 @@ public sealed class ConfigWindow : Window
             () => configuration.LoginSummary, v => configuration.LoginSummary = v);
         DrawCheckbox("ログイン時にハウスの入室期限を表示する（撤去予定日が近い場合は警告）",
             () => configuration.HousingDeadlineNotice, v => configuration.HousingDeadlineNotice = v);
+        DrawCheckbox("看板を開いたときにハウスの所有情報を学習する（所有者／FCメンバーの入室だけを最終入室に反映）",
+            () => configuration.LearnHousingOwnership, v => configuration.LearnHousingOwnership = v);
+        DrawCheckbox("ログイン中のキャラクターのFC（名前・タグ）を記録する",
+            () => configuration.ExportFreeCompany, v => configuration.ExportFreeCompany = v);
     }
 
     private void DrawCheckbox(string label, Func<bool> get, Action<bool> set)
