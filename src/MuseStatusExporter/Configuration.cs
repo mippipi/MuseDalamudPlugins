@@ -44,5 +44,8 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Include shared FATE progress (per-zone rank and completed-FATE counts) in the snapshot.</summary>
     public bool ExportFateProgress { get; set; } = true;
 
+    /// <summary>Include chocobo companion (buddy) rank and EXP in the snapshot.</summary>
+    public bool ExportBuddy { get; set; } = true;
+
     public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
 }

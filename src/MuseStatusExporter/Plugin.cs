@@ -29,6 +29,9 @@ using Lumina.Excel.Sheets;
 // requests), not the Lumina sheet of the same name.
 using Achievement = FFXIVClientStructs.FFXIV.Client.Game.UI.Achievement;
 
+// The number array behind the Buddy window (current / max EXP display).
+using BuddyNumberArray = FFXIVClientStructs.FFXIV.Client.UI.Arrays.BuddyNumberArray;
+
 namespace MuseStatusExporter;
 
 /// <summary>
@@ -128,6 +131,17 @@ namespace MuseStatusExporter;
 /// not 0, so the Halone Earring was equipped on a level-100 Warrior.
 /// The check now uses PlayerState.GetCurrentClassJobMaxLevel (the cap
 /// of the job being played) plus the level &lt; 100 rule.
+///
+/// Since v1.13.0 the snapshot also carries the chocobo companion (buddy)
+/// state ("Buddy"): name, rank, current EXP and skill points from
+/// UIState.Buddy.CompanionInfo (a resident structure, readable without
+/// opening any window), plus the current rank's max EXP from the Buddy
+/// window's number array (BuddyNumberArray) whenever it is available.
+/// The last known max EXP is kept per character in a sidecar file
+/// ("mstatus-buddy-&lt;Character&gt;-&lt;World&gt;.json"), because the number
+/// array is not always populated. "LevelUpReady" is set when the EXP
+/// bar is full below the rank cap (20): feeding a Thavnairian Onion at
+/// a stable then raises the rank.
 /// </summary>
 public sealed class Plugin : IDalamudPlugin
 {
@@ -225,6 +239,15 @@ public sealed class Plugin : IDalamudPlugin
     private readonly Dictionary<string, List<FateProgressZoneEntry>> fateCaptureByCharacter = new();
     private readonly Dictionary<string, string> fateCaptureKeyByCharacter = new();
     private DateTime lastFateCheckUtc = DateTime.MinValue;
+
+    // Chocobo companion (buddy) capture (v1.13.0). Rank and current EXP
+    // live in the resident UIState.Buddy.CompanionInfo, but the current
+    // rank's max EXP only appears in the Buddy window's number array,
+    // which is not always populated. The last known max EXP is therefore
+    // kept per character (memory + sidecar file) and reused.
+    private const int BuddyMaxRank = 20;
+    private readonly object buddyLock = new();
+    private readonly Dictionary<string, int> buddyMaxExpByCharacter = new();
 
     // Shared FATE progress through achievement requests (v1.12.2), the
     // design Auto FATE Grind uses: every shared-FATE zone's completed
@@ -1550,7 +1573,138 @@ public sealed class Plugin : IDalamudPlugin
             Log.Warning(ex, "Failed to read shared FATE progress.");
         }
 
+        // ---- Chocobo companion (buddy) ------------------------------------------
+        try
+        {
+            if (configuration.ExportBuddy)
+                snapshot.Buddy = BuildBuddy(snapshot.Character, snapshot.World);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to read buddy data.");
+        }
+
         return snapshot;
+    }
+
+    /// <summary>
+    /// Reads the chocobo companion state. Rank, current EXP, name and skill
+    /// points come from the resident CompanionInfo; the current rank's max
+    /// EXP comes from the Buddy window's number array when available and
+    /// falls back to the last known value (sidecar file). Returns null when
+    /// the buddy does not appear to be unlocked yet (no name, rank 0, no EXP).
+    /// </summary>
+    private unsafe BuddyData? BuildBuddy(string character, string world)
+    {
+        var uiState = UIState.Instance();
+        if (uiState == null)
+            return null;
+
+        var info = uiState->Buddy.CompanionInfo;
+        var name = info.NameString;
+        var rank = (int)info.Rank;
+        var currentExp = (int)Math.Min(info.CurrentXP, int.MaxValue);
+        if (rank <= 0 && currentExp == 0 && string.IsNullOrEmpty(name))
+            return null;
+
+        int? maxExp = null;
+        var numberArray = BuddyNumberArray.Instance();
+        if (numberArray != null && numberArray->MaxExp > 0)
+            maxExp = numberArray->MaxExp;
+
+        var key = $"{character}@{world}";
+        if (maxExp.HasValue)
+        {
+            var changed = false;
+            lock (buddyLock)
+            {
+                if (!buddyMaxExpByCharacter.TryGetValue(key, out var known) || known != maxExp.Value)
+                {
+                    buddyMaxExpByCharacter[key] = maxExp.Value;
+                    changed = true;
+                }
+            }
+            if (changed)
+                SaveBuddyMaxExp(character, world, maxExp.Value);
+        }
+        else
+        {
+            lock (buddyLock)
+            {
+                if (buddyMaxExpByCharacter.TryGetValue(key, out var known))
+                    maxExp = known;
+            }
+            if (!maxExp.HasValue)
+            {
+                maxExp = LoadBuddyMaxExp(character, world);
+                if (maxExp.HasValue)
+                {
+                    lock (buddyLock)
+                        buddyMaxExpByCharacter[key] = maxExp.Value;
+                }
+            }
+        }
+
+        return new BuddyData
+        {
+            Name = name ?? string.Empty,
+            Rank = rank,
+            CurrentExp = currentExp,
+            MaxExp = maxExp,
+            SkillPoints = (int)info.SkillPoints,
+            LevelUpReady = maxExp.HasValue && maxExp.Value > 0 &&
+                           currentExp >= maxExp.Value && rank < BuddyMaxRank,
+        };
+    }
+
+    private void SaveBuddyMaxExp(string character, string world, int maxExp)
+    {
+        try
+        {
+            var file = new BuddyFile
+            {
+                Character = character,
+                World = world,
+                CapturedAt = DateTimeOffset.Now.ToString("o"),
+                MaxExp = maxExp,
+            };
+            var path = GetBuddyCapturePath(character, world);
+            var json = JsonSerializer.Serialize(file, JsonOptions);
+            var tmpPath = path + ".tmp";
+            File.WriteAllText(tmpPath, json);
+            if (File.Exists(path))
+                File.Replace(tmpPath, path, null);
+            else
+                File.Move(tmpPath, path);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to save the buddy capture.");
+        }
+    }
+
+    private int? LoadBuddyMaxExp(string character, string world)
+    {
+        try
+        {
+            var path = GetBuddyCapturePath(character, world);
+            if (!File.Exists(path))
+                return null;
+
+            var file = JsonSerializer.Deserialize<BuddyFile>(File.ReadAllText(path));
+            return file is { MaxExp: > 0 } ? file.MaxExp : null;
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to load the buddy capture.");
+            return null;
+        }
+    }
+
+    private string GetBuddyCapturePath(string character, string world)
+    {
+        var fileName = $"mstatus-buddy-{SanitizeFilePart(character)}-{SanitizeFilePart(world)}.json";
+        return Path.Combine(configDirectory, fileName);
     }
 
     private unsafe List<GearsetData> BuildGearsets(Lumina.Excel.ExcelSheet<ClassJob>? classJobSheet)
@@ -2217,6 +2371,7 @@ public sealed class Plugin : IDalamudPlugin
         public GcCaptureDebugData? GcWindowDebug => Snapshot.GcWindowDebug;
         public List<HousingVisitEntry> HousingVisits => Snapshot.HousingVisits;
         public List<FateProgressZoneEntry> FateProgress => Snapshot.FateProgress;
+        public BuddyData? Buddy => Snapshot.Buddy;
     }
 
     public sealed class Snapshot
@@ -2237,6 +2392,7 @@ public sealed class Plugin : IDalamudPlugin
         public bool? HaloneEarringEquipped { get; set; }
         public MainScenarioData? MainScenario { get; set; }
         public List<FateProgressZoneEntry> FateProgress { get; set; } = [];
+        public BuddyData? Buddy { get; set; }
         public GrandCompanySupplyData? GrandCompanySupply { get; set; }
         public GcCaptureDebugData? GcWindowDebug { get; set; }
         public List<HousingVisitEntry> HousingVisits { get; set; } = [];
@@ -2283,6 +2439,24 @@ public sealed class Plugin : IDalamudPlugin
         public string World { get; set; } = string.Empty;
         public string CapturedAt { get; set; } = string.Empty;
         public List<FateProgressZoneEntry> Zones { get; set; } = [];
+    }
+
+    public sealed class BuddyData
+    {
+        public string Name { get; set; } = string.Empty;
+        public int Rank { get; set; }
+        public int CurrentExp { get; set; }
+        public int? MaxExp { get; set; }
+        public int SkillPoints { get; set; }
+        public bool LevelUpReady { get; set; }
+    }
+
+    public sealed class BuddyFile
+    {
+        public string Character { get; set; } = string.Empty;
+        public string World { get; set; } = string.Empty;
+        public string CapturedAt { get; set; } = string.Empty;
+        public int MaxExp { get; set; }
     }
 
     public sealed class CurrencyEntry

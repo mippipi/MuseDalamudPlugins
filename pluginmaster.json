@@ -1,1 +1,20 @@
-[{"ApplicableVersion":"any","AssemblyVersion":"1.12.4.0","Author":"Muse","DalamudApiLevel":15,"Description":"Exports the logged-in character's job/class levels, Cosmic Exploration progress, gearsets, equipped items, currencies, inventory, retainers, Grand Company supply requests, housing visits, main scenario progress and shared FATE progress to per-character JSON files; records incoming tells; applies plugin configuration files sent by Muse (config downlink); keeps the Halone Earring equipped while leveling. Every feature can be toggled in the plugin's settings window.","DownloadLinkInstall":"https://github.com/mippipi/MuseDalamudPlugins/raw/main/plugins/MuseStatusExporter/latest.zip","DownloadLinkUpdate":"https://github.com/mippipi/MuseDalamudPlugins/raw/main/plugins/MuseStatusExporter/latest.zip","InternalName":"MuseStatusExporter","IsHide":false,"IsTestingExclusive":false,"LoadPriority":0,"Name":"Muse Status Exporter","RepoUrl":"https://github.com/mippipi/MuseDalamudPlugins","Tags":["utility"]}]
+[
+  {
+    "ApplicableVersion": "any",
+    "AssemblyVersion": "1.13.0.0",
+    "Author": "Muse",
+    "DalamudApiLevel": 15,
+    "Description": "Exports the logged-in character's job/class levels, Cosmic Exploration progress, gearsets, equipped items, currencies, inventory, retainers, Grand Company supply requests, housing visits, main scenario progress and shared FATE progress to per-character JSON files; records incoming tells; applies plugin configuration files sent by Muse (config downlink); keeps the Halone Earring equipped while leveling. Every feature can be toggled in the plugin's settings window. Since v1.13.0 the snapshot also includes the chocobo companion (buddy) name, rank, EXP and level-up readiness.",
+    "DownloadLinkInstall": "https://github.com/mippipi/MuseDalamudPlugins/raw/main/plugins/MuseStatusExporter/latest.zip",
+    "DownloadLinkUpdate": "https://github.com/mippipi/MuseDalamudPlugins/raw/main/plugins/MuseStatusExporter/latest.zip",
+    "InternalName": "MuseStatusExporter",
+    "IsHide": false,
+    "IsTestingExclusive": false,
+    "LoadPriority": 0,
+    "Name": "Muse Status Exporter",
+    "RepoUrl": "https://github.com/mippipi/MuseDalamudPlugins",
+    "Tags": [
+      "utility"
+    ]
+  }
+]

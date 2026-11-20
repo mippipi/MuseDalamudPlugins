@@ -51,6 +51,8 @@ public sealed class ConfigWindow : Window
             () => configuration.ExportMainScenario, v => configuration.ExportMainScenario = v);
         DrawCheckbox("共有FATE達成度を記録する",
             () => configuration.ExportFateProgress, v => configuration.ExportFateProgress = v);
+        DrawCheckbox("バディ（チョコボ）のランクと経験値を記録する",
+            () => configuration.ExportBuddy, v => configuration.ExportBuddy = v);
     }
 
     private void DrawCheckbox(string label, Func<bool> get, Action<bool> set)
