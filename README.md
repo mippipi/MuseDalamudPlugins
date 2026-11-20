@@ -11,7 +11,7 @@ This repository publishes my custom plugin "Muse Status Exporter" and its compan
 
 ### このリポジトリについて
 
-FFXIV の Dalamud 用カスタムプラグイン リポジトリです。プラグイン本体は Dalamud のカスタムリポジトリ機能から直接インストール・更新できます。プラグインのソースコードと、PC 側で動かす付属アップローダー（PowerShell）もあわせて公開しています。
+FFXIV の Dalamud 用カスタムプラグイン リポジトリです。プラグイン本体は Dalamud のカスタムリポジトリ機能から直接インストール・更新できます。プラグインのソースコードと、PC 側で動かすアップローダーアプリもあわせて公開しています。
 
 ### Dalamud への登録方法
 
@@ -52,17 +52,12 @@ FFXIV の Dalamud 用カスタムプラグイン リポジトリです。プラ�
 
 `uploader-app/` フォルダには、PowerShell 版アップローダーとコレクターを統合した Windows トレイ常駐アプリ「FFXIV Status Uploader」が入っています。ステータス送信（5分ごと）とプラグイン設定の収集（1時間ごと）を常駐実行し、自動アップデートにも対応します。詳しくは `uploader-app/README.md` を参照してください。
 
-### 付属アップローダー（uploader/）
-
-`uploader/` フォルダには、Muse Status Exporter と対になる Windows PowerShell 製アップローダーが入っています。プラグインが出力したキャラ別ステータス JSON、テル記録、プラグイン設定の軽量スナップショットを Google Drive へ送信し、Muse から送られる設定ファイルをプラグインへ届けます。セットアップ方法は `uploader/README.md` を参照してください。これらのスクリプト自体に認証情報は含まれていません（Google のリフレッシュトークンは DPAPI で暗号化されたローカルファイルにのみ保存されます）。
-
 ### 構成
 
 - `pluginmaster.json` — Dalamud が読むリポジトリの索引
 - `plugins/<InternalName>/latest.zip` — インストール用プラグインパッケージ
 - `src/` — プラグインのソースコード
-- `uploader/` — 付属アップローダー（PowerShell、旧版）
-- `uploader-app/` — トレイ常駐アップローダーアプリ（後継）
+- `uploader-app/` — トレイ常駐アップローダーアプリ
 
 ---
 
@@ -70,7 +65,7 @@ FFXIV の Dalamud 用カスタムプラグイン リポジトリです。プラ�
 
 ### About this repository
 
-A custom plugin repository for Dalamud (FFXIV). The plugin itself can be installed and updated directly through Dalamud's custom repository feature. The plugin source code and the companion uploader (PowerShell, runs on the PC) are published here as well.
+A custom plugin repository for Dalamud (FFXIV). The plugin itself can be installed and updated directly through Dalamud's custom repository feature. The plugin source code and the companion uploader app (runs on the PC) are published here as well.
 
 ### How to add this repository in Dalamud
 
@@ -120,19 +115,9 @@ The interface specification for connecting other plugins and tools to this syste
 
 The `uploader-app/` folder holds "FFXIV Status Uploader", a Windows tray application that unifies the PowerShell uploader and the collector. It runs the status sync (every 5 minutes) and the plugin-config collection (every hour) as a resident app and updates itself automatically. See `uploader-app/README.md` for details.
 
-### Companion uploader (uploader/)
-
-The `uploader/` folder holds the Windows PowerShell uploader that pairs
-with Muse Status Exporter: it pushes the plugin's per-character status
-JSON files, tell records and plugin config snapshots to Google Drive,
-and delivers configuration files sent by Muse back to the plugin.
-See `uploader/README.md` for setup. No credentials are stored in these
-scripts (the Google refresh token stays in a DPAPI-encrypted local file).
-
 ### Layout
 
 - `pluginmaster.json` — the repository index Dalamud reads
 - `plugins/<InternalName>/latest.zip` — the installable plugin package
 - `src/` — plugin source code
-- `uploader/` — the companion uploader (PowerShell, legacy)
-- `uploader-app/` — the tray uploader app (successor)
+- `uploader-app/` — the tray uploader app

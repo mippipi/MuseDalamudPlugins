@@ -2,7 +2,7 @@
 
 ## 日本語
 
-PowerShell 版アップローダー（`uploader/`）とコレクター（Collect-DalamudConfig.ps1）の後継です。両者の機能を1つの Windows アプリに統合し、タスクトレイに常駐して自動実行します。ファイルの受け渡し仕様（[連携仕様](../docs/INTEGRATION.md)）は PowerShell 版と同一です。
+PowerShell 版アップローダーとコレクター（Collect-DalamudConfig.ps1）の後継です。両者の機能を1つの Windows アプリに統合し、タスクトレイに常駐して自動実行します。ファイルの受け渡し仕様（[連携仕様](../docs/INTEGRATION.md)）は PowerShell 版と同一です。
 
 ### 動作
 
@@ -31,7 +31,7 @@ PowerShell 版アップローダー（`uploader/`）とコレクター（Collect
 
 ## English
 
-The successor to the PowerShell uploader (`uploader/`) and the collector (Collect-DalamudConfig.ps1). It combines both into a single Windows tray application. The file hand-off contract (see the [integration spec](../docs/INTEGRATION.md)) is identical to the PowerShell version.
+The successor to the PowerShell uploader and the collector (Collect-DalamudConfig.ps1). It combines both into a single Windows tray application. The file hand-off contract (see the [integration spec](../docs/INTEGRATION.md)) is identical to the PowerShell version.
 
 ### What it does
 

@@ -42,7 +42,7 @@ This document describes everything another plugin or tool needs to connect to th
 | `ffxiv-config-requests.json` | 配布者 → プラグイン | 設定ダウンリンクのリクエスト一覧（共有先に置く） |
 | `ffxiv-config-results.json` | プラグイン → 配布者 | ダウンリンクの適用結果（プラグインが設定フォルダに書き、トランスポートが共有先へ運ぶ） |
 | `config-inbox\<リクエストID>.json` | トランスポート → プラグイン | 配信されたリクエスト封筒（処理後は `config-inbox\done\` へ移動） |
-| `FF14-pluginConfigs-light-<yyyyMMdd-HHmmss>.zip` | PC → 読み手 | Dalamud 設定一式の軽量スナップショット（任意。トランスポートは最新1件だけを同名で運び、同名があればスキップ） |
+| `FF14-pluginConfigs-<yyyyMMdd-HHmmss>.zip` | PC → 読み手 | Dalamud 設定一式の軽量スナップショット（任意。トランスポートは最新1件だけを同名で運び、同名があればスキップ） |
 
 キャラ名・ワールド名はファイル名に使える形に整形されます（空白は除去されます。例: `ffxiv-status-RenStella-Ramuh.json`）。
 
@@ -175,11 +175,11 @@ This document describes everything another plugin or tool needs to connect to th
 
 ### トランスポートの契約
 
-付属アップローダー（`uploader/`）は次を運びます。自作のトランスポートに置き換える場合は、同じファイル契約を守ってください。
+付属アップローダーアプリ（`uploader-app/`）は次を運びます。自作のトランスポートに置き換える場合は、同じファイル契約を守ってください。
 
 - プラグイン設定フォルダの `ffxiv-status-*.json`、`ffxiv-tells-*.json`、`ffxiv-config-results.json` を共有先へ（同名で上書き）
 - 共有先の `ffxiv-config-requests.json` を読み、`pending` のリクエストを `config-inbox\` へ配信し、`Status` を更新して書き戻す（ファイルが無ければ `{ "Version": 1, "Requests": [] }` を作成する）
-- 設定スナップショット zip（`FF14-pluginConfigs-light-*.zip`）の最新1件を同名で共有先へ（同名があればスキップ）
+- 設定スナップショット zip（`FF14-pluginConfigs-*.zip`）の最新1件を同名で共有先へ（同名があればスキップ）
 
 付属アップローダーの実装上の約束:
 
@@ -235,7 +235,7 @@ Everything is relative to the target plugin's config folder (`%AppData%\XIVLaunc
 | `ffxiv-config-requests.json` | sender → plugin | Config downlink requests (kept at the shared location) |
 | `ffxiv-config-results.json` | plugin → sender | Downlink outcomes (written by the plugin into its config folder, carried to the shared location by the transport) |
 | `config-inbox\<request ID>.json` | transport → plugin | A delivered request envelope (moved to `config-inbox\done\` after processing) |
-| `FF14-pluginConfigs-light-<yyyyMMdd-HHmmss>.zip` | PC → reader | Lightweight snapshot of the whole Dalamud config set (optional; the transport carries only the newest one, under the same name, and skips it if that name already exists) |
+| `FF14-pluginConfigs-<yyyyMMdd-HHmmss>.zip` | PC → reader | Lightweight snapshot of the whole Dalamud config set (optional; the transport carries only the newest one, under the same name, and skips it if that name already exists) |
 
 Character and world names are sanitized for file names (spaces are removed, e.g. `ffxiv-status-RenStella-Ramuh.json`).
 
@@ -368,11 +368,11 @@ Result side (`Results[]` in `ffxiv-config-results.json`; each entry is `{ Id, Ta
 
 ### Transport contract
 
-The bundled uploader (`uploader/`) carries the following. A replacement transport must honor the same file contract.
+The bundled uploader app (`uploader-app/`) carries the following. A replacement transport must honor the same file contract.
 
 - Uploads `ffxiv-status-*.json`, `ffxiv-tells-*.json` and `ffxiv-config-results.json` from the plugin config folder to the shared location (same names, overwritten)
 - Reads `ffxiv-config-requests.json` at the shared location, delivers `pending` requests into `config-inbox\`, updates their `Status`, and writes the file back (creates `{ "Version": 1, "Requests": [] }` when missing)
-- Uploads the newest config snapshot zip (`FF14-pluginConfigs-light-*.zip`) under the same name (skips it if that name already exists)
+- Uploads the newest config snapshot zip (`FF14-pluginConfigs-*.zip`) under the same name (skips it if that name already exists)
 
 Implementation commitments of the bundled uploader:
 
