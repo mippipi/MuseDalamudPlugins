@@ -1,0 +1,6 @@
+{
+  "version": "1.0.0",
+  "zipUrl": "https://github.com/mippipi/MuseDalamudPlugins/releases/download/uploader-app-v1.0.0/FfxivStatusUploaderApp.zip",
+  "sha256": "2dcdcfddf5778e8d91a4e47f7a21ad2fc9457aaee63743668fd84f28b3168ae3",
+  "notes": "初回リリース。PowerShell 版アップローダー v6 とコレクター v3.6.1（軽量モード）を統合したトレイ常駐アプリ。"
+}

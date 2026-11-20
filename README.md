@@ -48,6 +48,10 @@ FFXIV の Dalamud 用カスタムプラグイン リポジトリです。プラ�
 
 他のプラグインやツールがこの仕組みに接続するためのインターフェース仕様（ステータス JSON の形式、設定ダウンリンクのプロトコル、トランスポートの契約）を [連携仕様（docs/INTEGRATION.md）](docs/INTEGRATION.md) に公開しています。
 
+### アップローダーアプリ（uploader-app/）
+
+`uploader-app/` フォルダには、PowerShell 版アップローダーとコレクターを統合した Windows トレイ常駐アプリ「FFXIV Status Uploader」が入っています。ステータス送信（5分ごと）とプラグイン設定の収集（1時間ごと）を常駐実行し、自動アップデートにも対応します。詳しくは `uploader-app/README.md` を参照してください。
+
 ### 付属アップローダー（uploader/）
 
 `uploader/` フォルダには、Muse Status Exporter と対になる Windows PowerShell 製アップローダーが入っています。プラグインが出力したキャラ別ステータス JSON、テル記録、プラグイン設定の軽量スナップショットを Google Drive へ送信し、Muse から送られる設定ファイルをプラグインへ届けます。セットアップ方法は `uploader/README.md` を参照してください。これらのスクリプト自体に認証情報は含まれていません（Google のリフレッシュトークンは DPAPI で暗号化されたローカルファイルにのみ保存されます）。
@@ -57,7 +61,8 @@ FFXIV の Dalamud 用カスタムプラグイン リポジトリです。プラ�
 - `pluginmaster.json` — Dalamud が読むリポジトリの索引
 - `plugins/<InternalName>/latest.zip` — インストール用プラグインパッケージ
 - `src/` — プラグインのソースコード
-- `uploader/` — 付属アップローダー（PowerShell）
+- `uploader/` — 付属アップローダー（PowerShell、旧版）
+- `uploader-app/` — トレイ常駐アップローダーアプリ（後継）
 
 ---
 
@@ -111,6 +116,10 @@ Source code: [`src/MuseStatusExporter`](src/MuseStatusExporter)
 
 The interface specification for connecting other plugins and tools to this system (the status JSON format, the config downlink protocol, and the transport contract) is published in the [integration spec (docs/INTEGRATION.md)](docs/INTEGRATION.md).
 
+### Uploader app (uploader-app/)
+
+The `uploader-app/` folder holds "FFXIV Status Uploader", a Windows tray application that unifies the PowerShell uploader and the collector. It runs the status sync (every 5 minutes) and the plugin-config collection (every hour) as a resident app and updates itself automatically. See `uploader-app/README.md` for details.
+
 ### Companion uploader (uploader/)
 
 The `uploader/` folder holds the Windows PowerShell uploader that pairs
@@ -125,4 +134,5 @@ scripts (the Google refresh token stays in a DPAPI-encrypted local file).
 - `pluginmaster.json` — the repository index Dalamud reads
 - `plugins/<InternalName>/latest.zip` — the installable plugin package
 - `src/` — plugin source code
-- `uploader/` — the companion uploader (PowerShell)
+- `uploader/` — the companion uploader (PowerShell, legacy)
+- `uploader-app/` — the tray uploader app (successor)
