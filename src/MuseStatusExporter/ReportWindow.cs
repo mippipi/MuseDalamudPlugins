@@ -23,7 +23,9 @@ namespace MuseStatusExporter;
 /// same reading pattern as the cross-character login summary); the
 /// current character uses the live snapshot. The design follows the
 /// settings window: dark violet theme with panelled sections. The
-/// display language follows Configuration.UiLanguage.
+/// display language follows Configuration.UiLanguage and can be
+/// switched with the header buttons, like in the settings window
+/// (v1.22.1).
 /// </summary>
 public sealed class ReportWindow : Window
 {
@@ -121,18 +123,73 @@ public sealed class ReportWindow : Window
         ImGui.TextUnformatted(L("Muse Status Exporter レポート", "Muse Status Exporter Report"));
         ImGui.SetWindowFontScale(1f);
 
-        // Refresh button, right-aligned on the title line (the same
-        // alignment approach as the settings window's header buttons).
-        var refreshLabel = L("更新", "Refresh");
-        var style = ImGui.GetStyle();
-        var buttonWidth = ImGui.CalcTextSize(refreshLabel).X + style.FramePadding.X * 2;
-        ImGui.SetCursorPos(new Vector2(ImGui.GetWindowContentRegionMax().X - buttonWidth, titlePos.Y));
-        if (ImGui.SmallButton(refreshLabel))
-            RefreshTabs();
+        DrawTitleLineButtons(titlePos);
 
         ImGui.TextColored(MutedText, L(
             "各キャラクターのステータスです。他のキャラクターは保存済みのデータから表示します。",
             "Status of each character. Other characters are shown from their saved data."));
+    }
+
+    /// <summary>
+    /// Language switch and refresh button at the right end of the title
+    /// line. The language buttons mirror the settings window (v1.21.5):
+    /// the active language is highlighted with the accent color, the
+    /// language names are always written in their own language, and
+    /// switching saves immediately (the shared Configuration.UiLanguage,
+    /// so the settings window follows too) and retitles this window;
+    /// the ### id part stays constant, so the window keeps its position
+    /// and size. Added in v1.22.1.
+    /// </summary>
+    private void DrawTitleLineButtons(Vector2 titlePos)
+    {
+        const string jaLabel = "日本語";
+        const string enLabel = "English";
+        var refreshLabel = L("更新", "Refresh");
+        var style = ImGui.GetStyle();
+        var languageWidth = ImGui.CalcTextSize(jaLabel).X + ImGui.CalcTextSize(enLabel).X
+            + style.FramePadding.X * 4 + style.ItemSpacing.X;
+        var refreshWidth = ImGui.CalcTextSize(refreshLabel).X + style.FramePadding.X * 2;
+        var totalWidth = languageWidth + style.ItemSpacing.X + refreshWidth;
+        ImGui.SetCursorPos(new Vector2(ImGui.GetWindowContentRegionMax().X - totalWidth, titlePos.Y));
+
+        if (DrawLanguageButton(jaLabel, !English))
+        {
+            configuration.UiLanguage = 0;
+            configuration.Save();
+            WindowName = "Muse Status Exporter レポート###MuseStatusExporterReport";
+        }
+
+        ImGui.SameLine();
+
+        if (DrawLanguageButton(enLabel, English))
+        {
+            configuration.UiLanguage = 1;
+            configuration.Save();
+            WindowName = "Muse Status Exporter Report###MuseStatusExporterReport";
+        }
+
+        ImGui.SameLine();
+
+        if (ImGui.SmallButton(refreshLabel))
+            RefreshTabs();
+    }
+
+    private static bool DrawLanguageButton(string label, bool active)
+    {
+        if (active)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Button, AccentDim);
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, AccentDim);
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, AccentDim);
+            ImGui.PushStyleColor(ImGuiCol.Text, Vector4.One);
+        }
+
+        var clicked = ImGui.SmallButton(label);
+
+        if (active)
+            ImGui.PopStyleColor(4);
+
+        return clicked;
     }
 
     private void DrawTabChips()

@@ -240,6 +240,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IDalamudPluginInterface PluginInterface { get; private set; } = null!;
     [PluginService] internal static ICommandManager CommandManager { get; private set; } = null!;
     [PluginService] internal static IClientState ClientState { get; private set; } = null!;
+    [PluginService] internal static IPlayerState DalamudPlayerState { get; private set; } = null!;
     [PluginService] internal static IObjectTable ObjectTable { get; private set; } = null!;
     [PluginService] internal static IFramework Framework { get; private set; } = null!;
     [PluginService] internal static IChatGui ChatGui { get; private set; } = null!;
@@ -674,6 +675,8 @@ public sealed class Plugin : IDalamudPlugin
 
         if (TryExport(force: true))
             ChatGui.Print($"[Muse Status Exporter] Wrote status to {lastWrittenPath}");
+        else if (IsNpcControlled())
+            ChatGui.Print("[Muse Status Exporter] NPCを操作中のため、ステータスの書き出しをスキップしました。");
         else
             ChatGui.Print("[Muse Status Exporter] Not logged in; nothing to write.");
     }
@@ -1582,9 +1585,51 @@ public sealed class Plugin : IDalamudPlugin
     }
 
     /// <summary>Builds the current snapshot and writes it when due. Returns false when not logged in.</summary>
+    /// <summary>
+    /// Whether the player is currently controlling an NPC in a
+    /// role-playing (single-player) instance (v1.22.1). The local player
+    /// object then carries the NPC's name, while the logged-in
+    /// character's name stays in the resident PlayerState struct:
+    /// Dalamud's IPlayerState.CharacterName reads that struct's name
+    /// field (verified against the Dalamud implementation), the same
+    /// struct whose job levels keep the real character's values while
+    /// an NPC is controlled. When the real name cannot be read (state
+    /// not loaded yet), this returns false so exports behave exactly as
+    /// before.
+    /// </summary>
+    private bool IsNpcControlled()
+    {
+        try
+        {
+            var player = ObjectTable.LocalPlayer;
+            if (player == null)
+                return false;
+
+            if (!DalamudPlayerState.IsLoaded)
+                return false;
+
+            var realName = DalamudPlayerState.CharacterName;
+            if (string.IsNullOrWhiteSpace(realName))
+                return false;
+
+            return !string.Equals(player.Name.TextValue, realName, StringComparison.Ordinal);
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to determine whether an NPC is being controlled.");
+            return false;
+        }
+    }
+
     private bool TryExport(bool force)
     {
         if (!configuration.ExportStatus)
+            return false;
+
+        // While an NPC is controlled, an export would write the real
+        // character's data under the NPC's name (v1.22.1). Skip the
+        // export entirely: nothing is created or overwritten.
+        if (IsNpcControlled())
             return false;
 
         Snapshot? snapshot;
