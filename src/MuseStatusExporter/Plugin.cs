@@ -460,6 +460,7 @@ public sealed class Plugin : IDalamudPlugin
     private readonly Configuration configuration;
     private readonly WindowSystem windowSystem;
     private readonly ConfigWindow configWindow;
+    private readonly ReportWindow reportWindow;
 
     // ---- EXP earring auto-equip (v1.9.0) -----------------------------------
     // Halone Earring (item 52439): pre-order bonus earring whose kill-EXP
@@ -483,8 +484,10 @@ public sealed class Plugin : IDalamudPlugin
 
         configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         configWindow = new ConfigWindow(configuration);
+        reportWindow = new ReportWindow(configuration, configDirectory, () => lastBuiltSnapshot);
         windowSystem = new WindowSystem("MuseStatusExporter");
         windowSystem.AddWindow(configWindow);
+        windowSystem.AddWindow(reportWindow);
         PluginInterface.UiBuilder.Draw += windowSystem.Draw;
         PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigWindow;
         PluginInterface.UiBuilder.OpenMainUi += ToggleConfigWindow;
@@ -638,6 +641,12 @@ public sealed class Plugin : IDalamudPlugin
 
     private void OnCommand(string command, string args)
     {
+        if (args.Trim().Equals("report", StringComparison.OrdinalIgnoreCase))
+        {
+            reportWindow.Toggle();
+            return;
+        }
+
         if (args.Trim().Equals("config", StringComparison.OrdinalIgnoreCase))
         {
             configSync.Tick();
