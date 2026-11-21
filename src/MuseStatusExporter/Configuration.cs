@@ -11,6 +11,9 @@ public sealed class Configuration : IPluginConfiguration
 {
     public int Version { get; set; } = 1;
 
+    /// <summary>Settings window language: 0 = Japanese, 1 = English (v1.21.5). Not a feature toggle.</summary>
+    public int UiLanguage { get; set; } = 0;
+
     /// <summary>Master switch: write the per-character status JSON at all.</summary>
     public bool ExportStatus { get; set; } = true;
 

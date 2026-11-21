@@ -14,7 +14,10 @@ namespace MuseStatusExporter;
 /// per category holding panelled sections whose rows carry a graphical
 /// toggle switch. The switches are the same settings as before (the
 /// Configuration fields are unchanged); changes are saved immediately,
-/// so there is no separate apply/save button.
+/// so there is no separate apply/save button. The whole window can be
+/// switched between Japanese and English from the header buttons; the
+/// choice is stored in Configuration.UiLanguage (0 = Japanese,
+/// 1 = English).
 /// </summary>
 public sealed class ConfigWindow : Window
 {
@@ -40,10 +43,16 @@ public sealed class ConfigWindow : Window
     private readonly List<Category> categories;
     private int selectedCategory;
 
+    private bool English => configuration.UiLanguage == 1;
+
+    private string L(string japanese, string english) => English ? english : japanese;
+
     public ConfigWindow(Configuration configuration)
         : base("Muse Status Exporter 設定###MuseStatusExporterConfig")
     {
         this.configuration = configuration;
+        if (configuration.UiLanguage == 1)
+            WindowName = "Muse Status Exporter Settings###MuseStatusExporterConfig";
         this.categories = BuildCategories();
         SizeConstraints = new WindowSizeConstraints
         {
@@ -92,10 +101,16 @@ public sealed class ConfigWindow : Window
     {
         DrawIcon(FontAwesomeIcon.ChartBar, Accent);
         ImGui.SameLine(0, 9);
+        var titlePos = ImGui.GetCursorPos();
         ImGui.SetWindowFontScale(1.2f);
-        ImGui.TextUnformatted("Muse Status Exporter 設定");
+        ImGui.TextUnformatted(L("Muse Status Exporter 設定", "Muse Status Exporter Settings"));
         ImGui.SetWindowFontScale(1f);
-        ImGui.TextColored(MutedText, "各機能のオン／オフを切り替えます。変更はすぐに保存されます。");
+
+        DrawLanguageButtons(titlePos);
+
+        ImGui.TextColored(MutedText, L(
+            "各機能のオン／オフを切り替えます。変更はすぐに保存されます。",
+            "Toggle each feature on or off. Changes are saved immediately."));
 
         var enabled = 0;
         var total = 0;
@@ -110,8 +125,60 @@ public sealed class ConfigWindow : Window
         }
 
         ImGui.Spacing();
-        ImGui.TextColored(MutedText, $"有効な機能: {enabled} / {total}");
+        ImGui.TextColored(MutedText, English
+            ? $"Enabled features: {enabled} / {total}"
+            : $"有効な機能: {enabled} / {total}");
         ImGui.ProgressBar(total == 0 ? 0f : (float)enabled / total, new Vector2(-1, 6), string.Empty);
+    }
+
+    /// <summary>
+    /// Japanese / English switch at the right end of the title line. The
+    /// language names are always written in their own language. Switching
+    /// also retitles the window; the ### id part of the window name stays
+    /// constant, so the window keeps its position and size.
+    /// </summary>
+    private void DrawLanguageButtons(Vector2 titlePos)
+    {
+        const string jaLabel = "日本語";
+        const string enLabel = "English";
+        var style = ImGui.GetStyle();
+        var buttonsWidth = ImGui.CalcTextSize(jaLabel).X + ImGui.CalcTextSize(enLabel).X
+            + style.FramePadding.X * 4 + style.ItemSpacing.X;
+        ImGui.SetCursorPos(new Vector2(ImGui.GetWindowContentRegionMax().X - buttonsWidth, titlePos.Y));
+
+        if (DrawLanguageButton(jaLabel, !English))
+        {
+            configuration.UiLanguage = 0;
+            configuration.Save();
+            WindowName = "Muse Status Exporter 設定###MuseStatusExporterConfig";
+        }
+
+        ImGui.SameLine();
+
+        if (DrawLanguageButton(enLabel, English))
+        {
+            configuration.UiLanguage = 1;
+            configuration.Save();
+            WindowName = "Muse Status Exporter Settings###MuseStatusExporterConfig";
+        }
+    }
+
+    private static bool DrawLanguageButton(string label, bool active)
+    {
+        if (active)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Button, AccentDim);
+            ImGui.PushStyleColor(ImGuiCol.ButtonHovered, AccentDim);
+            ImGui.PushStyleColor(ImGuiCol.ButtonActive, AccentDim);
+            ImGui.PushStyleColor(ImGuiCol.Text, Vector4.One);
+        }
+
+        var clicked = ImGui.SmallButton(label);
+
+        if (active)
+            ImGui.PopStyleColor(4);
+
+        return clicked;
     }
 
     private void DrawCategoryRow(int index)
@@ -132,9 +199,9 @@ public sealed class ConfigWindow : Window
         DrawIcon(category.Icon, selected ? Vector4.One : MutedText);
         ImGui.SameLine(0, 9);
         if (selected)
-            ImGui.TextUnformatted(category.Name);
+            ImGui.TextUnformatted(category.Name(English));
         else
-            ImGui.TextColored(MutedText, category.Name);
+            ImGui.TextColored(MutedText, category.Name(English));
 
         var enabled = category.Items.Count(item => item.Get());
         var countText = $"{enabled}/{category.Items.Count}";
@@ -151,7 +218,7 @@ public sealed class ConfigWindow : Window
         ImGui.SameLine(0, 9);
         var titlePos = ImGui.GetCursorPos();
         ImGui.SetWindowFontScale(1.15f);
-        ImGui.TextUnformatted(category.Name);
+        ImGui.TextUnformatted(category.Name(English));
         ImGui.SetWindowFontScale(1f);
 
         // "All on / all off" buttons for this category, right-aligned on
@@ -162,8 +229,8 @@ public sealed class ConfigWindow : Window
         // had already advanced the cursor to the next line, which made
         // the computed right edge overshoot by the title icon's offset
         // and clipped the last button.)
-        const string onLabel = "すべてオン";
-        const string offLabel = "すべてオフ";
+        var onLabel = L("すべてオン", "All On");
+        var offLabel = L("すべてオフ", "All Off");
         var style = ImGui.GetStyle();
         var buttonsWidth = ImGui.CalcTextSize(onLabel).X + ImGui.CalcTextSize(offLabel).X
             + style.FramePadding.X * 4 + style.ItemSpacing.X;
@@ -179,7 +246,7 @@ public sealed class ConfigWindow : Window
             var section = category.Sections[s];
             ImGui.Spacing();
             ImGui.Spacing();
-            ImGui.TextColored(MutedText, section.Title);
+            ImGui.TextColored(MutedText, section.Title(English));
             ImGui.Spacing();
 
             var panelHeight = section.Items.Count * RowHeight + 10;
@@ -199,9 +266,10 @@ public sealed class ConfigWindow : Window
         var avail = ImGui.GetContentRegionAvail().X;
 
         ImGui.SetCursorPos(new Vector2(pos.X + 12, pos.Y + (RowHeight - ImGui.GetTextLineHeight()) / 2f));
-        ImGui.TextUnformatted(item.Label);
-        if (item.Tooltip != null && ImGui.IsItemHovered())
-            ImGui.SetTooltip(item.Tooltip);
+        ImGui.TextUnformatted(item.Label(English));
+        var tooltip = item.Tooltip(English);
+        if (tooltip != null && ImGui.IsItemHovered())
+            ImGui.SetTooltip(tooltip);
 
         ImGui.SetCursorPos(new Vector2(pos.X + avail - ToggleWidth - 12, pos.Y + (RowHeight - ToggleHeight) / 2f));
         if (DrawToggle(item.Id, item.Get()))
@@ -260,116 +328,128 @@ public sealed class ConfigWindow : Window
 
     private List<Category> BuildCategories()
     {
-        SettingItem Item(string id, string label, string? tooltip, Func<bool> get, Action<bool> set)
-            => new(id, label, tooltip, get, set);
+        SettingItem Item(string id, string labelJa, string labelEn, string? tooltipJa, string? tooltipEn, Func<bool> get, Action<bool> set)
+            => new(id, labelJa, labelEn, tooltipJa, tooltipEn, get, set);
 
         return new List<Category>
         {
-            new(FontAwesomeIcon.ChartBar, "ステータス", new List<SettingSection>
+            new(FontAwesomeIcon.ChartBar, "ステータス", "Status", new List<SettingSection>
             {
-                new("基本", new List<SettingItem>
+                new("基本", "Basics", new List<SettingItem>
                 {
-                    Item("ExportStatus", "ステータス書き出し（マスター）",
+                    Item("ExportStatus", "ステータス書き出し（マスター）", "Status Export (Master)",
                         "ジョブレベル・コスモ・装備など、ステータスJSONの書き出し全体のオン／オフです",
+                        "Master switch for the whole status JSON export (job levels, cosmic exploration, gear, and more).",
                         () => configuration.ExportStatus, v => configuration.ExportStatus = v),
                 }),
-                new("記録する情報", new List<SettingItem>
+                new("記録する情報", "Recorded Information", new List<SettingItem>
                 {
-                    Item("ExportCurrencies", "所持通貨", null,
+                    Item("ExportCurrencies", "所持通貨", "Currencies", null, null,
                         () => configuration.ExportCurrencies, v => configuration.ExportCurrencies = v),
-                    Item("ExportInventory", "インベントリ", null,
+                    Item("ExportInventory", "インベントリ", "Inventory", null, null,
                         () => configuration.ExportInventory, v => configuration.ExportInventory = v),
-                    Item("ExportRetainers", "リテイナー情報", null,
+                    Item("ExportRetainers", "リテイナー情報", "Retainer Information", null, null,
                         () => configuration.ExportRetainers, v => configuration.ExportRetainers = v),
-                    Item("ExportFreeCompany", "FC情報（名前・タグ）",
+                    Item("ExportFreeCompany", "FC情報（名前・タグ）", "Free Company Info (Name & Tag)",
                         "ログイン中のキャラクターのFC（名前・タグ）を記録します",
+                        "Records the logged-in character's Free Company (name and tag).",
                         () => configuration.ExportFreeCompany, v => configuration.ExportFreeCompany = v),
-                    Item("RecordPlayTime", "プレイ時間", null,
+                    Item("RecordPlayTime", "プレイ時間", "Play Time", null, null,
                         () => configuration.RecordPlayTime, v => configuration.RecordPlayTime = v),
                 }),
             }),
-            new(FontAwesomeIcon.Tasks, "進行状況", new List<SettingSection>
+            new(FontAwesomeIcon.Tasks, "進行状況", "Progress", new List<SettingSection>
             {
-                new("進行・達成度", new List<SettingItem>
+                new("進行・達成度", "Progress & Achievements", new List<SettingItem>
                 {
-                    Item("ExportMainScenario", "メインクエスト進行状況", null,
+                    Item("ExportMainScenario", "メインクエスト進行状況", "Main Scenario Progress", null, null,
                         () => configuration.ExportMainScenario, v => configuration.ExportMainScenario = v),
-                    Item("ExportFateProgress", "共有FATE達成度", null,
+                    Item("ExportFateProgress", "共有FATE達成度", "Shared FATE Progress", null, null,
                         () => configuration.ExportFateProgress, v => configuration.ExportFateProgress = v),
-                    Item("ExportOccultCrescent", "クレセントアイルの進捗",
+                    Item("ExportOccultCrescent", "クレセントアイルの進捗", "Occult Crescent Progress",
                         "知識レベル・ファントムジョブ・銀貨／金貨を記録します",
+                        "Records knowledge level, phantom jobs, and silver/gold pieces.",
                         () => configuration.ExportOccultCrescent, v => configuration.ExportOccultCrescent = v),
-                    Item("ExportBuddy", "バディ（チョコボ）",
+                    Item("ExportBuddy", "バディ（チョコボ）", "Buddy (Chocobo)",
                         "バディのランクと経験値を記録します",
+                        "Records your buddy's rank and EXP.",
                         () => configuration.ExportBuddy, v => configuration.ExportBuddy = v),
-                    Item("ExportWeeklyTomestone", "週間トームストーン", null,
+                    Item("ExportWeeklyTomestone", "週間トームストーン", "Weekly Tomestones", null, null,
                         () => configuration.ExportWeeklyTomestone, v => configuration.ExportWeeklyTomestone = v),
-                    Item("ExportRouletteCompletion", "コンテンツルーレット消化状況", null,
+                    Item("ExportRouletteCompletion", "コンテンツルーレット消化状況", "Duty Roulette Completion", null, null,
                         () => configuration.ExportRouletteCompletion, v => configuration.ExportRouletteCompletion = v),
                 }),
             }),
-            new(FontAwesomeIcon.ShieldAlt, "GC・リテイナー", new List<SettingSection>
+            new(FontAwesomeIcon.ShieldAlt, "GC・リテイナー", "GC & Retainers", new List<SettingSection>
             {
-                new("大隊・リテイナー", new List<SettingItem>
+                new("大隊・リテイナー", "Grand Company & Retainers", new List<SettingItem>
                 {
-                    Item("CaptureGcSupply", "GC軍需品リストの取得", null,
+                    Item("CaptureGcSupply", "GC軍需品リストの取得", "Capture GC Supply List", null, null,
                         () => configuration.CaptureGcSupply, v => configuration.CaptureGcSupply = v),
-                    Item("ProbeGcAgent", "GCエージェントの状態（実験）", null,
+                    Item("ProbeGcAgent", "GCエージェントの状態（実験）", "GC Agent State (Experimental)", null, null,
                         () => configuration.ProbeGcAgent, v => configuration.ProbeGcAgent = v),
-                    Item("ExportRetainerMarket", "リテイナーの出品リスト", null,
+                    Item("ExportRetainerMarket", "リテイナーの出品リスト", "Retainer Market Listings", null, null,
                         () => configuration.ExportRetainerMarket, v => configuration.ExportRetainerMarket = v),
                 }),
             }),
-            new(FontAwesomeIcon.Home, "ハウス", new List<SettingSection>
+            new(FontAwesomeIcon.Home, "ハウス", "Housing", new List<SettingSection>
             {
-                new("ハウス", new List<SettingItem>
+                new("ハウス", "Housing", new List<SettingItem>
                 {
-                    Item("RecordHousingVisits", "ハウス訪問の記録", null,
+                    Item("RecordHousingVisits", "ハウス訪問の記録", "Record House Visits", null, null,
                         () => configuration.RecordHousingVisits, v => configuration.RecordHousingVisits = v),
-                    Item("LearnHousingOwnership", "所有情報を看板で学習",
+                    Item("LearnHousingOwnership", "所有情報を看板で学習", "Learn Ownership from Placards",
                         "看板を開いたときにハウスの所有情報を学習し、所有者／FCメンバーの入室だけを最終入室に反映します",
+                        "Learns each house's ownership when you view its placard, so only the owner's or an FC member's entry advances the last entry date.",
                         () => configuration.LearnHousingOwnership, v => configuration.LearnHousingOwnership = v),
-                    Item("HousingDeadlineNotice", "ログイン時に撤去予定日を表示",
+                    Item("HousingDeadlineNotice", "ログイン時に撤去予定日を表示", "Show Demolition Dates on Login",
                         "各ハウスの最終入室からの経過日数と撤去予定日を表示し、撤去が近い場合は警告します",
+                        "Shows the days since each house's last entry and its demolition date, and warns when demolition is near.",
                         () => configuration.HousingDeadlineNotice, v => configuration.HousingDeadlineNotice = v),
-                    Item("HousingEntryNotice", "最終入室の更新を知らせる",
+                    Item("HousingEntryNotice", "最終入室の更新を知らせる", "Notify on Last-Entry Updates",
                         "資格のある入室でハウスの最終入室が更新されたら知らせます",
+                        "Notifies you when a qualified entry updates a house's last entry date.",
                         () => configuration.HousingEntryNotice, v => configuration.HousingEntryNotice = v),
                 }),
             }),
-            new(FontAwesomeIcon.Comments, "チャット・通知", new List<SettingSection>
+            new(FontAwesomeIcon.Comments, "チャット・通知", "Chat & Alerts", new List<SettingSection>
             {
-                new("チャット記録", new List<SettingItem>
+                new("チャット記録", "Chat Recording", new List<SettingItem>
                 {
-                    Item("RecordTells", "Tell（送受信）", null,
+                    Item("RecordTells", "Tell（送受信）", "Tells (Incoming & Outgoing)", null, null,
                         () => configuration.RecordTells, v => configuration.RecordTells = v),
-                    Item("RecordPartyChat", "パーティチャット",
+                    Item("RecordPartyChat", "パーティチャット", "Party Chat",
                         "クロスワールドPTのチャットも含みます",
+                        "Includes cross-world party chat.",
                         () => configuration.RecordPartyChat, v => configuration.RecordPartyChat = v),
                 }),
-                new("ゲーム内通知", new List<SettingItem>
+                new("ゲーム内通知", "In-Game Notifications", new List<SettingItem>
                 {
-                    Item("InGameAlerts", "ゲーム内通知",
+                    Item("InGameAlerts", "ゲーム内通知", "In-Game Notifications",
                         "ベンチャー完了・バディのレベルアップ可能・GC新リストを通知します",
+                        "Notifies venture completion, buddy level-up readiness, and new GC supply lists.",
                         () => configuration.InGameAlerts, v => configuration.InGameAlerts = v),
-                    Item("LoginSummary", "ログイン時サマリー",
+                    Item("LoginSummary", "ログイン時サマリー", "Login Summary",
                         "GC軍需品の不足・ベンチャー・週間トームストーンを表示します",
+                        "Shows GC supply shortages, ventures, and weekly tomestones on login.",
                         () => configuration.LoginSummary, v => configuration.LoginSummary = v),
-                    Item("CrossCharacterSummary", "他キャラのベンチャー完了を集約",
+                    Item("CrossCharacterSummary", "他キャラのベンチャー完了を集約", "Include Other Characters' Ventures",
                         "ログインサマリーに他キャラのベンチャー完了をまとめます",
+                        "Adds other characters' completed ventures to the login summary.",
                         () => configuration.CrossCharacterSummary, v => configuration.CrossCharacterSummary = v),
-                    Item("DurabilityWarning", "装備の耐久度低下の警告", null,
+                    Item("DurabilityWarning", "装備の耐久度低下の警告", "Low Durability Warning", null, null,
                         () => configuration.DurabilityWarning, v => configuration.DurabilityWarning = v),
                 }),
             }),
-            new(FontAwesomeIcon.Cog, "システム", new List<SettingSection>
+            new(FontAwesomeIcon.Cog, "システム", "System", new List<SettingSection>
             {
-                new("連携・その他", new List<SettingItem>
+                new("連携・その他", "Integration & Other", new List<SettingItem>
                 {
-                    Item("ConfigDownlink", "設定ダウンリンク",
+                    Item("ConfigDownlink", "設定ダウンリンク", "Configuration Downlink",
                         "Museからの設定適用（config-inbox）を受け付けます",
+                        "Accepts configuration changes sent by Muse (config-inbox).",
                         () => configuration.ConfigDownlink, v => configuration.ConfigDownlink = v),
-                    Item("AutoEquipHaloneEarring", "ハルオーネイヤリングの自動装備", null,
+                    Item("AutoEquipHaloneEarring", "ハルオーネイヤリングの自動装備", "Auto-Equip Halone Earring", null, null,
                         () => configuration.AutoEquipHaloneEarring, v => configuration.AutoEquipHaloneEarring = v),
                 }),
             }),
@@ -378,47 +458,63 @@ public sealed class ConfigWindow : Window
 
     private sealed class SettingItem
     {
-        public SettingItem(string id, string label, string? tooltip, Func<bool> get, Action<bool> set)
+        public SettingItem(string id, string labelJa, string labelEn, string? tooltipJa, string? tooltipEn, Func<bool> get, Action<bool> set)
         {
             Id = id;
-            Label = label;
-            Tooltip = tooltip;
+            LabelJa = labelJa;
+            LabelEn = labelEn;
+            TooltipJa = tooltipJa;
+            TooltipEn = tooltipEn;
             Get = get;
             Set = set;
         }
 
         public string Id { get; }
-        public string Label { get; }
-        public string? Tooltip { get; }
+        public string LabelJa { get; }
+        public string LabelEn { get; }
+        public string? TooltipJa { get; }
+        public string? TooltipEn { get; }
         public Func<bool> Get { get; }
         public Action<bool> Set { get; }
+
+        public string Label(bool english) => english ? LabelEn : LabelJa;
+
+        public string? Tooltip(bool english) => english ? TooltipEn : TooltipJa;
     }
 
     private sealed class SettingSection
     {
-        public SettingSection(string title, List<SettingItem> items)
+        public SettingSection(string titleJa, string titleEn, List<SettingItem> items)
         {
-            Title = title;
+            TitleJa = titleJa;
+            TitleEn = titleEn;
             Items = items;
         }
 
-        public string Title { get; }
+        public string TitleJa { get; }
+        public string TitleEn { get; }
         public List<SettingItem> Items { get; }
+
+        public string Title(bool english) => english ? TitleEn : TitleJa;
     }
 
     private sealed class Category
     {
-        public Category(FontAwesomeIcon icon, string name, List<SettingSection> sections)
+        public Category(FontAwesomeIcon icon, string nameJa, string nameEn, List<SettingSection> sections)
         {
             Icon = icon;
-            Name = name;
+            NameJa = nameJa;
+            NameEn = nameEn;
             Sections = sections;
             Items = sections.SelectMany(section => section.Items).ToList();
         }
 
         public FontAwesomeIcon Icon { get; }
-        public string Name { get; }
+        public string NameJa { get; }
+        public string NameEn { get; }
         public List<SettingSection> Sections { get; }
         public List<SettingItem> Items { get; }
+
+        public string Name(bool english) => english ? NameEn : NameJa;
     }
 }
