@@ -490,7 +490,7 @@ public sealed class Plugin : IDalamudPlugin
         windowSystem.AddWindow(reportWindow);
         PluginInterface.UiBuilder.Draw += windowSystem.Draw;
         PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigWindow;
-        PluginInterface.UiBuilder.OpenMainUi += ToggleConfigWindow;
+        PluginInterface.UiBuilder.OpenMainUi += ToggleReportWindow;
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
@@ -575,7 +575,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         PluginInterface.UiBuilder.Draw -= windowSystem.Draw;
         PluginInterface.UiBuilder.OpenConfigUi -= ToggleConfigWindow;
-        PluginInterface.UiBuilder.OpenMainUi -= ToggleConfigWindow;
+        PluginInterface.UiBuilder.OpenMainUi -= ToggleReportWindow;
         windowSystem.RemoveAllWindows();
 
         AddonLifecycle.UnregisterListener(AddonEvent.PostSetup, GcSupplyAddonName, OnGcWindowEvent);
@@ -638,6 +638,8 @@ public sealed class Plugin : IDalamudPlugin
     }
 
     private void ToggleConfigWindow() => configWindow.Toggle();
+
+    private void ToggleReportWindow() => reportWindow.Toggle();
 
     private void OnCommand(string command, string args)
     {
