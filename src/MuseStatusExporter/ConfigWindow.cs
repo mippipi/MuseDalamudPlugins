@@ -155,12 +155,16 @@ public sealed class ConfigWindow : Window
         ImGui.SetWindowFontScale(1f);
 
         // "All on / all off" buttons for this category, right-aligned on
-        // the title line.
+        // the title line. The row width is computed from the actual style
+        // metrics (frame padding and item spacing) so the last button is
+        // never clipped at the right edge.
         const string onLabel = "すべてオン";
         const string offLabel = "すべてオフ";
-        var buttonsWidth = ImGui.CalcTextSize(onLabel).X + ImGui.CalcTextSize(offLabel).X + 44;
+        var style = ImGui.GetStyle();
+        var buttonsWidth = ImGui.CalcTextSize(onLabel).X + ImGui.CalcTextSize(offLabel).X
+            + style.FramePadding.X * 4 + style.ItemSpacing.X;
         var avail = ImGui.GetContentRegionAvail().X;
-        ImGui.SetCursorPos(new Vector2(titlePos.X + avail - buttonsWidth + ImGui.GetStyle().WindowPadding.X, titlePos.Y));
+        ImGui.SetCursorPos(new Vector2(titlePos.X + avail - buttonsWidth, titlePos.Y));
         if (ImGui.SmallButton(onLabel))
             SetAll(category, true);
         ImGui.SameLine();
