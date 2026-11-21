@@ -19,6 +19,7 @@ using Dalamud.Plugin;
 using Dalamud.Plugin.Services;
 using FFXIVClientStructs.FFXIV.Client.Game;
 using FFXIVClientStructs.FFXIV.Client.Game.Character;
+using FFXIVClientStructs.FFXIV.Client.Game.InstanceContent;
 using FFXIVClientStructs.FFXIV.Client.Game.Network;
 using FFXIVClientStructs.FFXIV.Client.Game.UI;
 using FFXIVClientStructs.FFXIV.Client.Game.WKS;
@@ -384,6 +385,21 @@ public sealed class Plugin : IDalamudPlugin
     private const int HousingWarningDays = 7;
     private const int DurabilityWarningThreshold = 30;
     private const int DurabilityRearmThreshold = 50;
+
+    // Occult Crescent (v1.20.0): PlayerState content-value keys for the
+    // knowledge level (7 = the player's own level, 6 = the effective
+    // level after the current zone's level sync), the same keys the
+    // game itself publishes for field operations.
+    private const uint ContentValueEffectiveKnowledge = 6;
+    private const uint ContentValueCurrentKnowledge = 7;
+
+    // Occult Crescent currency items (the MKDData sheet's currency
+    // items): South Horn silver/gold pieces, North Horn silver/gold
+    // obols. They are ordinary items, counted through InventoryManager.
+    private const uint SilverPieceItemId = 45043;
+    private const uint GoldPieceItemId = 45044;
+    private const uint SilverObolItemId = 51975;
+    private const uint GoldObolItemId = 51976;
 
     // Owner-confirmed baseline: all three houses were last entered on
     // this date (stated by the owner on 2026-10-31). Used only to seed
@@ -1950,7 +1966,115 @@ public sealed class Plugin : IDalamudPlugin
             Log.Warning(ex, "Failed to read the character's Free Company.");
         }
 
+        // ---- Occult Crescent progress (v1.20.0) ----------------------------------
+        try
+        {
+            if (configuration.ExportOccultCrescent)
+                snapshot.OccultCrescent = BuildOccultCrescent();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to read Occult Crescent progress.");
+        }
+
         return snapshot;
+    }
+
+    /// <summary>
+    /// Occult Crescent progress (v1.20.0), read from the public-content
+    /// director's state while the player is inside an Occult Crescent
+    /// zone; null anywhere else (the state only exists there, so
+    /// consumers keep the last known values, like the cosmic data).
+    /// The knowledge level itself is a PlayerState content value
+    /// (7 = own level, 6 = effective level after the zone's sync);
+    /// per-job levels / EXP come from the state arrays, whose index is
+    /// the MKDSupportJob sheet's RowId. A job's EXP needed for the next
+    /// level comes from the MKDGrowDataSJob subrow for (job, level).
+    /// </summary>
+    private unsafe OccultCrescentData? BuildOccultCrescent()
+    {
+        var instance = PublicContentOccultCrescent.GetInstance();
+        if (instance == null || !instance->StateLoaded)
+            return null;
+
+        var state = PublicContentOccultCrescent.GetState();
+        if (state == null)
+            return null;
+
+        var playerState = PlayerState.Instance();
+        if (playerState == null)
+            return null;
+
+        var data = new OccultCrescentData
+        {
+            KnowledgeLevel = (int)playerState->GetContentValue(ContentValueCurrentKnowledge),
+            KnowledgeLevelEffective = (int)playerState->GetContentValue(ContentValueEffectiveKnowledge),
+            CurrentKnowledge = (int)Math.Min(state->CurrentKnowledge, int.MaxValue),
+            NeededKnowledge = (int)Math.Min(state->NeededKnowledge, int.MaxValue),
+            CurrentSupportJob = (int)state->CurrentSupportJob,
+            SilverPieces = CountInventoryItem(SilverPieceItemId),
+            GoldPieces = CountInventoryItem(GoldPieceItemId),
+            SilverObols = CountInventoryItem(SilverObolItemId),
+            GoldObols = CountInventoryItem(GoldObolItemId),
+        };
+
+        // Per-job EXP needed for the next level, keyed by (job, level).
+        // A failure here only loses the NeededExp values, never the
+        // whole section.
+        var neededByJobLevel = new Dictionary<(int Job, int Level), int>();
+        try
+        {
+            var growthSheet = DataManager.GetSubrowExcelSheet<MKDGrowDataSJob>();
+            if (growthSheet != null)
+            {
+                foreach (var row in growthSheet.Flatten())
+                    neededByJobLevel[((int)row.RowId, (int)row.SubrowId)] =
+                        (int)Math.Min(row.Unknown0, int.MaxValue);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to read the phantom job growth sheet.");
+        }
+
+        var jobSheet = DataManager.GetExcelSheet<MKDSupportJob>();
+        var levels = state->SupportJobLevels;
+        var experiences = state->SupportJobExperience;
+        var count = Math.Min(levels.Length, experiences.Length);
+        for (var i = 0; i < count; i++)
+        {
+            var level = (int)levels[i];
+            if (level <= 0)
+                continue;
+
+            var entry = new OccultSupportJobEntry
+            {
+                JobId = i,
+                Level = level,
+                Exp = (int)Math.Min(experiences[i], int.MaxValue),
+                NeededExp = neededByJobLevel.TryGetValue((i, level), out var needed) ? needed : 0,
+            };
+
+            if (jobSheet != null && jobSheet.TryGetRow((uint)i, out var row))
+            {
+                entry.Name = row.Name.ExtractText();
+                entry.LevelMax = row.LevelMax;
+            }
+
+            data.SupportJobs.Add(entry);
+        }
+
+        if (jobSheet != null && data.CurrentSupportJob >= 0 &&
+            jobSheet.TryGetRow((uint)data.CurrentSupportJob, out var currentRow))
+            data.CurrentSupportJobName = currentRow.Name.ExtractText();
+
+        return data;
+    }
+
+    private unsafe int CountInventoryItem(uint itemId)
+    {
+        var inventoryManager = InventoryManager.Instance();
+        return inventoryManager == null ? 0 : inventoryManager->GetInventoryItemCount(itemId);
     }
 
     /// <summary>
@@ -4034,6 +4158,7 @@ public sealed class Plugin : IDalamudPlugin
         public RouletteCompletionData? RouletteCompletion => Snapshot.RouletteCompletion;
         public List<RetainerMarketData> RetainerMarket => Snapshot.RetainerMarket;
         public FreeCompanyData? FreeCompany => Snapshot.FreeCompany;
+        public OccultCrescentData? OccultCrescent => Snapshot.OccultCrescent;
 
         // PlayTime and GcAgentProbe are deliberately NOT part of the
         // payload: both change on every read (session seconds grow, the
@@ -4073,6 +4198,7 @@ public sealed class Plugin : IDalamudPlugin
         public GcAgentProbeData? GcAgentProbe { get; set; }
         public List<RetainerMarketData> RetainerMarket { get; set; } = [];
         public FreeCompanyData? FreeCompany { get; set; }
+        public OccultCrescentData? OccultCrescent { get; set; }
     }
 
     public sealed class FreeCompanyData
@@ -4080,6 +4206,55 @@ public sealed class Plugin : IDalamudPlugin
         public ulong Id { get; set; }
         public string? Name { get; set; }
         public string? Tag { get; set; }
+    }
+
+    public sealed class OccultCrescentData
+    {
+        /// <summary>The player's own knowledge level (content value 7).</summary>
+        public int KnowledgeLevel { get; set; }
+
+        /// <summary>Knowledge level after the current zone's level sync (content value 6); equals KnowledgeLevel when no sync applies.</summary>
+        public int KnowledgeLevelEffective { get; set; }
+
+        /// <summary>Knowledge EXP accumulated inside the current knowledge level.</summary>
+        public int CurrentKnowledge { get; set; }
+
+        /// <summary>Knowledge EXP needed to leave the current knowledge level (0 at the cap, if the game reports it so).</summary>
+        public int NeededKnowledge { get; set; }
+
+        /// <summary>MKDSupportJob RowId of the currently equipped phantom job.</summary>
+        public int CurrentSupportJob { get; set; }
+
+        public string? CurrentSupportJobName { get; set; }
+
+        /// <summary>South Horn currency items held.</summary>
+        public int SilverPieces { get; set; }
+        public int GoldPieces { get; set; }
+
+        /// <summary>North Horn currency items held.</summary>
+        public int SilverObols { get; set; }
+        public int GoldObols { get; set; }
+
+        /// <summary>Unlocked phantom jobs only (level 1 or higher), in RowId order.</summary>
+        public List<OccultSupportJobEntry> SupportJobs { get; set; } = [];
+    }
+
+    public sealed class OccultSupportJobEntry
+    {
+        /// <summary>MKDSupportJob RowId; also the index into the state's level / EXP arrays.</summary>
+        public int JobId { get; set; }
+
+        public string? Name { get; set; }
+        public int Level { get; set; }
+
+        /// <summary>Phantom EXP accumulated inside the current level.</summary>
+        public int Exp { get; set; }
+
+        /// <summary>Phantom EXP needed to leave the current level (0 when unknown or at the cap).</summary>
+        public int NeededExp { get; set; }
+
+        /// <summary>The job's level cap from the MKDSupportJob sheet (0 when the row was not readable).</summary>
+        public int LevelMax { get; set; }
     }
 
     public sealed class MainScenarioData

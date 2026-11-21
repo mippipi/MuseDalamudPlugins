@@ -81,6 +81,8 @@ public sealed class ConfigWindow : Window
             () => configuration.DurabilityWarning, v => configuration.DurabilityWarning = v);
         DrawCheckbox("ログインサマリーに他キャラのベンチャー完了をまとめる",
             () => configuration.CrossCharacterSummary, v => configuration.CrossCharacterSummary = v);
+        DrawCheckbox("クレセントアイルの進捗（知識レベル・ファントムジョブ・銀貨／金貨）を記録する",
+            () => configuration.ExportOccultCrescent, v => configuration.ExportOccultCrescent = v);
     }
 
     private void DrawCheckbox(string label, Func<bool> get, Action<bool> set)

@@ -89,5 +89,8 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Include other characters' completed retainer ventures in the login summary (v1.18.0).</summary>
     public bool CrossCharacterSummary { get; set; } = true;
 
+    /// <summary>Include Occult Crescent progress (knowledge level, phantom job levels/EXP, crescent currencies) in the snapshot (v1.20.0).</summary>
+    public bool ExportOccultCrescent { get; set; } = true;
+
     public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
 }
