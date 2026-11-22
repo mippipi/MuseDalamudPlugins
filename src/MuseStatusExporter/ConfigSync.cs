@@ -37,8 +37,9 @@ internal sealed class ConfigSyncProcessor
 {
     private const int MaxResultEntries = 100;
     private const int RetentionDays = 30;
-    private static readonly TimeSpan DisableSettleTime = TimeSpan.FromSeconds(3);
-    private static readonly TimeSpan EnableSettleTimeout = TimeSpan.FromSeconds(12);
+    private static readonly TimeSpan UnloadTimeout = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan PostUnloadGraceTime = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan EnableSettleTimeout = TimeSpan.FromSeconds(90);
 
     private static readonly JsonSerializerOptions JsonOptions = new() { WriteIndented = true };
 
@@ -385,9 +386,40 @@ internal sealed class ConfigSyncProcessor
                         $"/xldisableplugin \"{job.MatchedPlugin!.Name}\"");
                     Plugin.Log.Info("Config sync {Id}: disable dispatched for {Plugin} (result {Result}).",
                         job.Envelope.Id, job.MatchedPlugin.Name, job.DisableDispatched);
-                    job.Step = JobStep.Write;
-                    job.StepReadyUtc = DateTime.UtcNow + DisableSettleTime;
+                    job.DisableStartedUtc = DateTime.UtcNow;
+                    job.Step = JobStep.WaitUnload;
+                    job.StepReadyUtc = DateTime.UtcNow + TimeSpan.FromSeconds(1);
                     break;
+
+                case JobStep.WaitUnload:
+                {
+                    // Do not write on a fixed timer: a large plugin can
+                    // still be unloading (and saving its config on dispose)
+                    // for a long time after the disable command. Wait until
+                    // it actually reports unloaded, so its own save lands
+                    // before the replacement write instead of reverting it.
+                    var current = FindPlugin(job.MatchedPlugin!.InternalName, null);
+                    if (current is { IsLoaded: true })
+                    {
+                        if (DateTime.UtcNow - job.DisableStartedUtc < UnloadTimeout)
+                        {
+                            job.StepReadyUtc = DateTime.UtcNow + TimeSpan.FromSeconds(1);
+                            return;
+                        }
+
+                        FinalizeJob(job.Envelope, job.InboxPath, "failed",
+                            $"The plugin did not unload within {UnloadTimeout.TotalSeconds:0}s "
+                            + "after the disable command; nothing was changed.");
+                        activeJob = null;
+                        break;
+                    }
+
+                    Plugin.Log.Info("Config sync {Id}: {Plugin} reported unloaded.",
+                        job.Envelope.Id, job.MatchedPlugin.Name);
+                    job.Step = JobStep.Write;
+                    job.StepReadyUtc = DateTime.UtcNow + PostUnloadGraceTime;
+                    break;
+                }
 
                 case JobStep.Write:
                 {
@@ -631,6 +663,7 @@ internal sealed class ConfigSyncProcessor
     private enum JobStep
     {
         Disable,
+        WaitUnload,
         Write,
         Enable,
         Verify,
@@ -647,6 +680,7 @@ internal sealed class ConfigSyncProcessor
         public bool ReloadLive { get; set; }
         public JobStep Step { get; set; }
         public DateTime StepReadyUtc { get; set; }
+        public DateTime DisableStartedUtc { get; set; }
         public DateTime VerifyStartedUtc { get; set; }
         public bool DisableDispatched { get; set; }
         public bool EnableDispatched { get; set; }
