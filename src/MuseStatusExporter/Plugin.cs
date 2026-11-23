@@ -481,9 +481,13 @@ public sealed class Plugin : IDalamudPlugin
     // Thavnairian Onion (item 8166): raises the buddy's rank cap by one
     // when used while the buddy is summoned in the field with a full EXP
     // bar (rank 10-19). The game only accepts the use when the buddy's
-    // rank has caught up with its cap (cap = 10 + CompanionInfo.Stars);
+    // rank has caught up with its cap (cap = 9 + CompanionInfo.Stars);
     // before that the onion would do nothing, so the gate below requires
-    // Stars == Rank - 10 as well as a full bar.
+    // Stars == Rank - 9 as well as a full bar. (The cap formula was
+    // corrected in v1.24.1: the buddy window shows 7 stars at rank 16
+    // with the cap raised to 16, so cap = 9 + Stars, not 10 + Stars.
+    // With the old formula the gate could never pass and the auto-use
+    // never fired, confirmed on a real machine at rank 15.)
     private const uint ThavnairianOnionItemId = 8166;
     private static readonly TimeSpan OnionCheckInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan OnionAttemptInterval = TimeSpan.FromSeconds(60);
@@ -991,7 +995,7 @@ public sealed class Plugin : IDalamudPlugin
     /// Uses a Thavnairian Onion from the bags when the buddy (chocobo
     /// companion) can gain a rank-cap raise: rank 10-19, the current rank's
     /// EXP bar full, and the cap not yet raised for this rank
-    /// (CompanionInfo.Stars == Rank - 10; the game refuses the use with a
+    /// (CompanionInfo.Stars == Rank - 9; the game refuses the use with a
     /// message while the rank is still below its cap). The onion only
     /// takes effect while the buddy is physically summoned next to the
     /// player in the field — using it anywhere else wastes it — so the
@@ -1052,9 +1056,9 @@ public sealed class Plugin : IDalamudPlugin
             }
 
             // The cap for the current rank must not be raised yet (cap =
-            // 10 + Stars): the game only accepts the onion once the
+            // 9 + Stars): the game only accepts the onion once the
             // buddy's rank has caught up with its cap.
-            if ((int)info.Stars != rank - 10)
+            if ((int)info.Stars != rank - 9)
                 return;
 
             int? maxExp = null;
@@ -2402,6 +2406,7 @@ public sealed class Plugin : IDalamudPlugin
             CurrentExp = currentExp,
             MaxExp = maxExp,
             SkillPoints = (int)info.SkillPoints,
+            Stars = (int)info.Stars,
             LevelUpReady = maxExp.HasValue && maxExp.Value > 0 &&
                            currentExp >= maxExp.Value && rank < BuddyMaxRank,
         };
@@ -4636,6 +4641,7 @@ public sealed class Plugin : IDalamudPlugin
         public int CurrentExp { get; set; }
         public int? MaxExp { get; set; }
         public int SkillPoints { get; set; }
+        public int Stars { get; set; }
         public bool LevelUpReady { get; set; }
     }
 
