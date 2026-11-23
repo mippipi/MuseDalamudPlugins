@@ -2143,6 +2143,17 @@ public sealed class Plugin : IDalamudPlugin
             Log.Warning(ex, "Failed to read shared FATE progress.");
         }
 
+        // ---- Class / job / role quest progress ---------------------------------
+        try
+        {
+            if (configuration.ExportQuestProgress)
+                snapshot.QuestProgress = BuildQuestProgress();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to read quest progress.");
+        }
+
         // ---- Chocobo companion (buddy) ------------------------------------------
         try
         {
@@ -3311,6 +3322,113 @@ public sealed class Plugin : IDalamudPlugin
         return result;
     }
 
+    private sealed class ClassQuestInfo
+    {
+        public ushort Id;
+        public int Level;
+        public uint GenreId;
+        public string GenreName = string.Empty;
+        public uint CategoryId;
+    }
+
+    private List<ClassQuestInfo>? classQuestCache;
+
+    /// <summary>
+    /// All quests in journal section 6 ("Class &amp; Job Quests"): class quests,
+    /// job quests, role quests and the crafter/gatherer delivery lines
+    /// (Crystalline Mean / Studium / Wachumeqimeqi). The list is static game
+    /// data, so it is scanned once and cached; only the completion flags are
+    /// read live per snapshot.
+    /// </summary>
+    private List<ClassQuestInfo> GetClassQuests()
+    {
+        if (classQuestCache != null)
+            return classQuestCache;
+
+        var result = new List<ClassQuestInfo>();
+        var questSheet = DataManager.GetExcelSheet<Quest>();
+        if (questSheet != null)
+        {
+            foreach (var row in questSheet)
+            {
+                if (row.RowId == 0)
+                    continue;
+
+                var genre = row.JournalGenre;
+                if (!genre.IsValid)
+                    continue;
+
+                var category = genre.Value.JournalCategory;
+                if (!category.IsValid)
+                    continue;
+
+                var section = category.Value.JournalSection;
+                if (!section.IsValid || section.RowId != 6)
+                    continue;
+
+                var name = row.Name.ExtractText();
+                if (string.IsNullOrEmpty(name))
+                    continue;
+
+                result.Add(new ClassQuestInfo
+                {
+                    Id = (ushort)(row.RowId & 0xFFFF),
+                    Level = row.ClassJobLevel.Count > 0 ? row.ClassJobLevel[0] : 0,
+                    GenreId = genre.RowId,
+                    GenreName = genre.Value.Name.ExtractText(),
+                    CategoryId = category.RowId,
+                });
+            }
+        }
+
+        result.Sort(static (a, b) =>
+            a.GenreId != b.GenreId
+                ? a.GenreId.CompareTo(b.GenreId)
+                : a.Level != b.Level
+                    ? a.Level.CompareTo(b.Level)
+                    : a.Id.CompareTo(b.Id));
+
+        // Only cache a non-empty list (same reasoning as GetMsqQuests).
+        if (result.Count > 0)
+            classQuestCache = result;
+        else
+            Log.Warning("No class/job/role quests found while scanning the Quest sheet.");
+
+        return result;
+    }
+
+    private unsafe QuestProgressData? BuildQuestProgress()
+    {
+        var quests = GetClassQuests();
+        if (quests.Count == 0)
+            return null;
+
+        var data = new QuestProgressData();
+        QuestGenreEntry? current = null;
+        foreach (var quest in quests)
+        {
+            if (current == null || current.GenreId != quest.GenreId)
+            {
+                current = new QuestGenreEntry
+                {
+                    GenreId = quest.GenreId,
+                    GenreName = quest.GenreName,
+                    CategoryId = quest.CategoryId,
+                };
+                data.Genres.Add(current);
+            }
+
+            current.Quests.Add(new QuestProgressEntry
+            {
+                Id = quest.Id,
+                Level = quest.Level,
+                Completed = QuestManager.IsQuestComplete(quest.Id),
+            });
+        }
+
+        return data;
+    }
+
     private unsafe MainScenarioData? BuildMainScenario()
     {
         var quests = GetMsqQuests();
@@ -4367,6 +4485,7 @@ public sealed class Plugin : IDalamudPlugin
         public bool? HaloneEarringEquipped { get; set; }
         public MainScenarioData? MainScenario { get; set; }
         public List<FateProgressZoneEntry> FateProgress { get; set; } = [];
+        public QuestProgressData? QuestProgress { get; set; }
         public BuddyData? Buddy { get; set; }
         public GrandCompanySupplyData? GrandCompanySupply { get; set; }
         public GcCaptureDebugData? GcWindowDebug { get; set; }
@@ -4458,6 +4577,36 @@ public sealed class Plugin : IDalamudPlugin
         public string Name { get; set; } = string.Empty;
         public int CompletedQuests { get; set; }
         public int TotalQuests { get; set; }
+    }
+
+    public sealed class QuestProgressData
+    {
+        public List<QuestGenreEntry> Genres { get; set; } = [];
+    }
+
+    public sealed class QuestGenreEntry
+    {
+        /// <summary>JournalGenre row id (one quest line, e.g. one job's quests).</summary>
+        public uint GenreId { get; set; }
+
+        /// <summary>Genre name in the game client's language (e.g. 木工師クエスト).</summary>
+        public string GenreName { get; set; } = string.Empty;
+
+        /// <summary>JournalCategory row id: 86-89 class quests, 90-92 deliveries, 93-94 job quests, 95 role quests.</summary>
+        public uint CategoryId { get; set; }
+
+        public List<QuestProgressEntry> Quests { get; set; } = [];
+    }
+
+    public sealed class QuestProgressEntry
+    {
+        /// <summary>Quest id (Quest sheet row id &amp; 0xFFFF), as used by QuestManager.IsQuestComplete.</summary>
+        public int Id { get; set; }
+
+        /// <summary>Quest level (ClassJobLevel[0] of the Quest sheet row).</summary>
+        public int Level { get; set; }
+
+        public bool Completed { get; set; }
     }
 
     public sealed class FateProgressZoneEntry
