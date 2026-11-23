@@ -1035,7 +1035,7 @@ public sealed class Plugin : IDalamudPlugin
                     onionUsePendingStars = -1;
                     ChatGui.Print(configuration.UiLanguage == 1
                         ? "[Muse Status Exporter] Used a Thavnairian Onion: the buddy's rank cap has been raised."
-                        : "[Muse Status Exporter] サベネアオニオンを使用し、バディのランク上限が上がりました。");
+                        : "[Muse Status Exporter] サベネアの野菜を使用し、バディのランク上限が上がりました。");
                 }
                 else if (now - lastOnionAttemptUtc >= OnionAttemptInterval)
                 {
@@ -3029,7 +3029,7 @@ public sealed class Plugin : IDalamudPlugin
         if (changed)
             SaveAlertState(character, world, state);
         if (announce)
-            ChatGui.Print("[Muse Status Exporter] バディがレベルアップ可能になりました。厩舎でサベネアオニオンを与えるとランクが上がります。");
+            ChatGui.Print("[Muse Status Exporter] バディがレベルアップ可能になりました。サベネアの野菜を使うとランクが上がります（フィールドでバディを呼び出している状態でも使えます）。");
     }
 
     private AlertStateFile GetAlertState(string character, string world)
