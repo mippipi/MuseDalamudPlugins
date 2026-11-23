@@ -44,6 +44,9 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Keep the Halone Earring equipped while leveling a battle job.</summary>
     public bool AutoEquipHaloneEarring { get; set; } = true;
 
+    /// <summary>Use a Thavnairian Onion from the bags when the buddy's EXP bar is full and its rank cap can be raised (rank 10-19, buddy summoned in the field).</summary>
+    public bool AutoUseThavnairianOnion { get; set; } = false;
+
     /// <summary>Include main scenario quest progress in the snapshot.</summary>
     public bool ExportMainScenario { get; set; } = true;
 

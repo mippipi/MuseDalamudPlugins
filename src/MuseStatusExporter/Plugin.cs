@@ -477,6 +477,20 @@ public sealed class Plugin : IDalamudPlugin
     private DateTime lastExpEarringAttemptUtc = DateTime.MinValue;
     private bool expEarringEquipPending;
 
+    // ---- Thavnairian Onion auto-use (v1.23.0) -----------------------------
+    // Thavnairian Onion (item 8166): raises the buddy's rank cap by one
+    // when used while the buddy is summoned in the field with a full EXP
+    // bar (rank 10-19). The game only accepts the use when the buddy's
+    // rank has caught up with its cap (cap = 10 + CompanionInfo.Stars);
+    // before that the onion would do nothing, so the gate below requires
+    // Stars == Rank - 10 as well as a full bar.
+    private const uint ThavnairianOnionItemId = 8166;
+    private static readonly TimeSpan OnionCheckInterval = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan OnionAttemptInterval = TimeSpan.FromSeconds(60);
+    private DateTime lastOnionCheckUtc = DateTime.MinValue;
+    private DateTime lastOnionAttemptUtc = DateTime.MinValue;
+    private int onionUsePendingStars = -1;
+
     public Plugin()
     {
         configDirectory = PluginInterface.GetPluginConfigDirectory();
@@ -827,6 +841,14 @@ public sealed class Plugin : IDalamudPlugin
             TryMaintainExpEarring(now);
         }
 
+        // Auto-use a Thavnairian Onion when the buddy's EXP bar is full
+        // and its rank cap can still be raised (v1.23.0).
+        if (now - lastOnionCheckUtc >= OnionCheckInterval)
+        {
+            lastOnionCheckUtc = now;
+            TryAutoUseThavnairianOnion(now);
+        }
+
         if (now - lastCheckUtc < CheckInterval)
             return;
         lastCheckUtc = now;
@@ -961,6 +983,183 @@ public sealed class Plugin : IDalamudPlugin
     private static readonly InventoryType[] ExpEarringSearchContainers =
     [
         InventoryType.ArmoryEar,
+        InventoryType.Inventory1, InventoryType.Inventory2,
+        InventoryType.Inventory3, InventoryType.Inventory4,
+    ];
+
+    /// <summary>
+    /// Uses a Thavnairian Onion from the bags when the buddy (chocobo
+    /// companion) can gain a rank-cap raise: rank 10-19, the current rank's
+    /// EXP bar full, and the cap not yet raised for this rank
+    /// (CompanionInfo.Stars == Rank - 10; the game refuses the use with a
+    /// message while the rank is still below its cap). The onion only
+    /// takes effect while the buddy is physically summoned next to the
+    /// player in the field — using it anywhere else wastes it — so the
+    /// buddy's presence in the object table is required, on top of the
+    /// usual combat / cutscene / zoning suppression. Off by default: the
+    /// onion is a valuable consumable and the use is irreversible. A
+    /// successful use is confirmed on a later check by the extra star,
+    /// because the use itself only queues the effect.
+    /// </summary>
+    private unsafe void TryAutoUseThavnairianOnion(DateTime now)
+    {
+        if (!configuration.AutoUseThavnairianOnion)
+            return;
+
+        try
+        {
+            var player = ObjectTable.LocalPlayer;
+            if (player == null || ClientState.IsPvP)
+                return;
+
+            var uiState = UIState.Instance();
+            if (uiState == null)
+                return;
+
+            var info = uiState->Buddy.CompanionInfo;
+            var rank = (int)info.Rank;
+            if (rank < 10 || rank >= BuddyMaxRank)
+            {
+                onionUsePendingStars = -1;
+                return;
+            }
+
+            // Confirmation of a previous attempt: the cap raise shows up
+            // as an additional star. Report it once, in the configured UI
+            // language, then stop tracking the attempt. While an attempt
+            // is unconfirmed, do not try again.
+            if (onionUsePendingStars >= 0)
+            {
+                if ((int)info.Stars > onionUsePendingStars)
+                {
+                    onionUsePendingStars = -1;
+                    ChatGui.Print(configuration.UiLanguage == 1
+                        ? "[Muse Status Exporter] Used a Thavnairian Onion: the buddy's rank cap has been raised."
+                        : "[Muse Status Exporter] サベネアオニオンを使用し、バディのランク上限が上がりました。");
+                }
+                else if (now - lastOnionAttemptUtc >= OnionAttemptInterval)
+                {
+                    // No star appeared within the attempt interval: the
+                    // use did not go through. Give up on this attempt; the
+                    // gates below may retry on a later check while the
+                    // conditions still hold.
+                    onionUsePendingStars = -1;
+                }
+                else
+                {
+                    return;
+                }
+            }
+
+            // The cap for the current rank must not be raised yet (cap =
+            // 10 + Stars): the game only accepts the onion once the
+            // buddy's rank has caught up with its cap.
+            if ((int)info.Stars != rank - 10)
+                return;
+
+            int? maxExp = null;
+            var buddyRankSheet = DataManager.GetExcelSheet<BuddyRank>();
+            if (buddyRankSheet != null &&
+                buddyRankSheet.TryGetRow((uint)rank, out var buddyRank) &&
+                buddyRank.ExpRequired > 0)
+                maxExp = (int)buddyRank.ExpRequired;
+            if (maxExp == null || (int)info.CurrentXP < maxExp.Value)
+                return;
+
+            if (Condition[ConditionFlag.InCombat]
+                || Condition[ConditionFlag.WatchingCutscene]
+                || Condition[ConditionFlag.OccupiedInCutSceneEvent]
+                || Condition[ConditionFlag.BetweenAreas])
+                return;
+
+            // The buddy must be physically present: an onion used while
+            // the chocobo is not next to the player (city, duty, or
+            // dismissed) is consumed with no effect.
+            if (!IsBuddySummoned(player.Address, player.EntityId))
+                return;
+
+            var inventory = InventoryManager.Instance();
+            if (inventory == null)
+                return;
+
+            InventoryType sourceType = default;
+            var sourceSlot = -1;
+            var sourceItemId = 0u;
+            foreach (var type in OnionSearchContainers)
+            {
+                var container = inventory->GetInventoryContainer(type);
+                if (container == null || !container->IsLoaded || container->Items == null)
+                    continue;
+
+                for (var slot = 0; slot < container->Size; slot++)
+                {
+                    var item = container->Items + slot;
+                    if (item != null && item->GetBaseItemId() == ThavnairianOnionItemId)
+                    {
+                        sourceType = type;
+                        sourceSlot = slot;
+                        sourceItemId = item->ItemId;
+                        break;
+                    }
+                }
+
+                if (sourceSlot >= 0)
+                    break;
+            }
+
+            if (sourceSlot < 0)
+                return; // No onion in the bags.
+
+            if (now - lastOnionAttemptUtc < OnionAttemptInterval)
+                return;
+
+            var agent = AgentInventoryContext.Instance();
+            if (agent == null)
+                return;
+
+            lastOnionAttemptUtc = now;
+            onionUsePendingStars = (int)info.Stars;
+
+            var result = agent->UseItem(sourceItemId, sourceType, (uint)sourceSlot);
+            Log.Information(
+                "Thavnairian Onion: UseItem {ItemId} from {Source} slot {Slot} (buddy rank {Rank}, stars {Stars}) returned {Result}.",
+                sourceItemId, sourceType, sourceSlot, rank, (int)info.Stars, result);
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to auto-use a Thavnairian Onion.");
+        }
+    }
+
+    /// <summary>
+    /// True when the player's chocobo companion is physically present in
+    /// the object table (a BattleNpc with SubKind Buddy owned by the
+    /// player). The remaining summon time alone is not enough: it keeps
+    /// counting while the chocobo is absent (city / duty), where using an
+    /// onion would waste it.
+    /// </summary>
+    private unsafe bool IsBuddySummoned(IntPtr playerAddress, uint playerEntityId)
+    {
+        if (playerAddress == IntPtr.Zero || playerEntityId == 0)
+            return false;
+
+        foreach (var obj in ObjectTable)
+        {
+            if (obj.Address == IntPtr.Zero || obj.Address == playerAddress)
+                continue;
+
+            var gameObject = (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)obj.Address;
+            if (gameObject->ObjectKind == FFXIVClientStructs.FFXIV.Client.Game.Object.ObjectKind.BattleNpc
+                && gameObject->BattleNpcSubKind == FFXIVClientStructs.FFXIV.Client.Game.Object.BattleNpcSubKind.Buddy
+                && gameObject->OwnerId == playerEntityId)
+                return true;
+        }
+
+        return false;
+    }
+
+    private static readonly InventoryType[] OnionSearchContainers =
+    [
         InventoryType.Inventory1, InventoryType.Inventory2,
         InventoryType.Inventory3, InventoryType.Inventory4,
     ];
