@@ -480,14 +480,16 @@ public sealed class Plugin : IDalamudPlugin
     // ---- Thavnairian Onion auto-use (v1.23.0) -----------------------------
     // Thavnairian Onion (item 8166): raises the buddy's rank cap by one
     // when used while the buddy is summoned in the field with a full EXP
-    // bar (rank 10-19). The game only accepts the use when the buddy's
-    // rank has caught up with its cap (cap = 9 + CompanionInfo.Stars);
-    // before that the onion would do nothing, so the gate below requires
-    // Stars == Rank - 9 as well as a full bar. (The cap formula was
-    // corrected in v1.24.1: the buddy window shows 7 stars at rank 16
-    // with the cap raised to 16, so cap = 9 + Stars, not 10 + Stars.
-    // With the old formula the gate could never pass and the auto-use
-    // never fired, confirmed on a real machine at rank 15.)
+    // bar (rank 10-19). CompanionInfo.Stars is the number of limit
+    // breaks performed, so the cap is 10 + Stars, and a feed is only
+    // needed (and only has an effect) once the rank has caught up with
+    // the cap: the gate below requires Stars == Rank - 10 as well as a
+    // full bar. Below the cap a full bar ranks up on the next combat
+    // EXP gain with no onion involved. (History: v1.24.1 changed the
+    // gate to Rank - 9 on a misread screenshot; on 2026-11-24 the buddy
+    // reached rank 17 with Stars still 7 and no onion used, proving the
+    // cap had been 17 at rank 16. v1.24.2 restores Rank - 10 and also
+    // drops the InCombat suppression: the onion is usable in combat.)
     private const uint ThavnairianOnionItemId = 8166;
     private static readonly TimeSpan OnionCheckInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan OnionAttemptInterval = TimeSpan.FromSeconds(60);
@@ -994,13 +996,14 @@ public sealed class Plugin : IDalamudPlugin
     /// <summary>
     /// Uses a Thavnairian Onion from the bags when the buddy (chocobo
     /// companion) can gain a rank-cap raise: rank 10-19, the current rank's
-    /// EXP bar full, and the cap not yet raised for this rank
-    /// (CompanionInfo.Stars == Rank - 9; the game refuses the use with a
-    /// message while the rank is still below its cap). The onion only
+    /// EXP bar full, and the rank has caught up with its cap
+    /// (CompanionInfo.Stars == Rank - 10; below the cap a full bar ranks
+    /// up on the next combat EXP gain and an onion would have no effect).
+    /// The onion only
     /// takes effect while the buddy is physically summoned next to the
     /// player in the field — using it anywhere else wastes it — so the
     /// buddy's presence in the object table is required, on top of the
-    /// usual combat / cutscene / zoning suppression. Off by default: the
+    /// usual cutscene / zoning suppression. Off by default: the
     /// onion is a valuable consumable and the use is irreversible. A
     /// successful use is confirmed on a later check by the extra star,
     /// because the use itself only queues the effect.
@@ -1055,10 +1058,9 @@ public sealed class Plugin : IDalamudPlugin
                 }
             }
 
-            // The cap for the current rank must not be raised yet (cap =
-            // 9 + Stars): the game only accepts the onion once the
-            // buddy's rank has caught up with its cap.
-            if ((int)info.Stars != rank - 9)
+            // The rank must have caught up with its cap (cap =
+            // 10 + Stars): only then does the onion have an effect.
+            if ((int)info.Stars != rank - 10)
                 return;
 
             int? maxExp = null;
@@ -1070,8 +1072,11 @@ public sealed class Plugin : IDalamudPlugin
             if (maxExp == null || (int)info.CurrentXP < maxExp.Value)
                 return;
 
-            if (Condition[ConditionFlag.InCombat]
-                || Condition[ConditionFlag.WatchingCutscene]
+            // No InCombat suppression: the onion is usable in combat
+            // (feeding items are not blocked by combat), and a full bar
+            // at the cap typically fills mid-fight. Cutscenes and zoning
+            // still suppress the use, where it could not go through.
+            if (Condition[ConditionFlag.WatchingCutscene]
                 || Condition[ConditionFlag.OccupiedInCutSceneEvent]
                 || Condition[ConditionFlag.BetweenAreas])
                 return;

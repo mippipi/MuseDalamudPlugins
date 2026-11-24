@@ -1,134 +1,360 @@
-# MuseDalamudPlugins
+# Muse Status Exporter（Dalamudプラグイン）
 
-個人用 Dalamud プラグイン リポジトリ / Personal Dalamud plugin repository.
+ログイン中のキャラクターの **全ジョブ／クラスのレベルと経験値**、**コスモエクスプローラーの進捗（クラス別スコア＋コスモツールの段階・研究分析値）**、**保存済みギアセットと現在装備** を、JSONファイルに自動で書き出すプラグインです。v1.8.0からは、Muse が送った **他プラグインの設定ファイルをゲーム内で適用する** 機能（設定ダウンリンク）も持っています。
 
-自作プラグイン「Muse Status Exporter」と、その付属アップローダーを公開しています。
-This repository publishes my custom plugin "Muse Status Exporter" and its companion uploader.
+- ICE等の他プラグインには依存しません。ゲーム標準の構造（PlayerState / WKSManager / RaptureGearsetModule / InventoryManager）から直接読みます。
+- 書き出しタイミング: ログイン時／データに変化があった時／ログイン中は5分おき（鮮度維持）／チャットコマンド `/mstatus` で即時。
+- 出力先: `%AppData%\XIVLauncher\pluginConfigs\MuseStatusExporter\ffxiv-status-<キャラ名>-<ワールド>.json`（キャラごとに別ファイル。ファイル名はログイン中のキャラから自動で決まるため、キャラが増えても設定変更は不要で、キャラ同士で上書きし合うこともありません）
+- 履歴: 前日以前に書かれたファイルは、上書き前に `old\` サブフォルダへ日時付きでコピーされ、1日1件程度の履歴が残ります。`old\` 内は30日より古いものが自動で削除されます（v1.3.0以降）
 
----
+## 導入手順
 
-## 日本語
+現行の Dalamud では、devPlugins フォルダに置くだけでは読み込まれません。**「Dev Plugin Locations」への登録** が必要です（Dalamud 本体のソースで確認済みの現行仕様）。
 
-### このリポジトリについて
+1. `MuseStatusExporter-plugin.zip` を展開する（中身は dll / deps.json / json の3ファイル）。
+2. `%AppData%\XIVLauncher\devPlugins\MuseStatusExporter\` フォルダを作り、3ファイルをその中に入れる。
+3. ゲーム内で `/xlsettings` を開き、「Experimental（試験的）」タブの **「Enable Developer Mode」** にチェックを入れる。
+4. 同じタブの下部に **「Dev Plugin Locations」** が表示される。一番下の入力欄に DLL のフルパスを貼って **＋** ボタンを押す（または「Select Dev Plugin DLL」ボタンでファイルを選ぶ）。
+   - 例: `C:\Users\<ユーザー名>\AppData\Roaming\XIVLauncher\devPlugins\MuseStatusExporter\MuseStatusExporter.dll`
+   - Enabled のチェックが入っていることを確認する。
+5. 設定ウィンドウを閉じる（保存時にスキャンが走り、プラグインが一覧に登録される）。
+6. `/xlplugins` のインストール済みプラグインに「Muse Status Exporter」が **無効状態で** 表示されるので、有効化する（初回は自動では読み込まれない）。
+7. ログインした状態で `/mstatus` と打つと即時書き出しされ、チャットに出力先パスが表示されます。
 
-FFXIV の Dalamud 用カスタムプラグイン リポジトリです。プラグイン本体は Dalamud のカスタムリポジトリ機能から直接インストール・更新できます。プラグインのソースコードと、PC 側で動かすアップローダーアプリもあわせて公開しています。
+次回以降の起動では、Developer Mode が有効で場所の Enabled が入っていれば自動で読み込まれます。
 
-### Dalamud への登録方法
+## 更新手順（バージョンアップ時）
 
-1. ゲーム内で `/xlsettings` を開き、**Experimental** タブを開く
-2. **Custom Plugin Repositories** に次の URL を追加して保存する
+1. ゲーム内で `/xlplugins` を開き、「Muse Status Exporter」を無効化する（読み込まれたままの DLL は上書きできないため。無効化しても上書きできない場合はゲームを終了する）。
+2. `%AppData%\XIVLauncher\devPlugins\MuseStatusExporter\` の3ファイルを、新しい zip の中身で上書きする。
+3. `/xlplugins` で再度有効化する。`/mstatus` で書き出し直せば新しい項目が JSON に入る。
 
-   ```
-   https://github.com/mippipi/MuseDalamudPlugins/raw/main/pluginmaster.json
-   ```
+## JSONの主な中身
 
-3. `/xlplugins` → **Available Plugins** でプラグインを検索してインストールする
+- `Character` / `World` / `CurrentJob`: キャラ名、ワールド、現在のジョブ略称
+- `DataUpdatedAt`: データ自体が最後に変化した時刻（レベルアップ等）
+- `ExportedAt`: ファイルを書き出した時刻
+- `Jobs[]`: `Id` / `Abbrev` / `Name` / `Level` / `Exp` / `NeededExp`（レベル0＝未取得のジョブは含みません）
+- `Cosmic.Classes[]`: `JobId`（8=木工〜18=漁）/ `Abbrev` / `Score`（クラス別コスモスコア）/ `ToolStage`（コスモツールの現在段階）/ `ToolStageUnlocked` / `Types[]`（研究の種類ごとの Current / Needed / Max）
+- `Gearsets[]`: 保存済みギアセットごとに `Id` / `Name` / `ClassJob`（略称）/ `ItemLevel`（平均IL）と、部位ごとの `Items[]`
+- `Equipped.Items[]`: 現在装備中の一式（同形式＋ `Condition` / `Spiritbond` がパーセントで付く）
+- アイテム項目: `Slot`（MainHand 等）/ `ItemId` / `Name` / `ItemLevel` / `IsHq` / `Glamour`（ミラージュ先のアイテム名）/ `Stain0`・`Stain1`（カララント名）/ `Materia[]`（装着マテリアのアイテム名）。空の部位は含みません
 
-インストールしたプラグインの更新は Dalamud 側で行われます（`/xlplugins` の更新通知、または Dalamud の自動更新設定が有効なら起動時に自動更新）。
+## 設定ダウンリンク（v1.8.0）
 
-### プラグイン: Muse Status Exporter
+Muse からプラグイン設定を変更できるようにする機能です。流れは次のとおりです。
 
-ログイン中のキャラクターのステータスを、プラグインの設定フォルダへキャラ別 JSON ファイルとして書き出すプラグインです。
+1. Muse が Google Drive の `ffxiv-config-requests.json` にリクエスト（対象ファイル・差し替え内容・任意で「現在のファイルのSHA-256」）を書く。
+2. アップローダー v5 が5分間隔の実行でそれを読み、`config-inbox\` フォルダ（このプラグインの設定フォルダ内）へ配信する。
+3. このプラグインが約1秒間隔で受信フォルダを確認し、リクエストを検証して適用する。
+4. 結果は `ffxiv-config-results.json` に記録され、アップローダーが Drive へ戻すので、Muse が成否を確認できる。
 
-- ジョブ／クラスのレベルと経験値
-- コスモエクスプローラーのスコアとコスモツールの段階
-- 保存済みギアセットと現在の装備
-- 通貨、インベントリ、リテイナーのベンチャー状態
-- GC軍需品／調達品のリクエスト（アドオンの AtkValues から取得）
-- ハウスへの入室履歴
-- 既知のハウスの最終入室日と撤去予定日（最終入室の45日後。看板から学習した所有情報で、所有者／FCメンバーの入室だけを反映）
-- ログイン中のキャラクターのFC（ID・名前・タグ）
-- メインクエストの進行状況
-- 全18エリアの共有FATE達成度（Auto FATE Grind と同じ方式でサーバーへ能動取得するため、FATEウィンドウを開く必要はありません）
-- バディ（チョコボ）のランクと経験値、レベルアップ可能かどうかの判定
-- 週間トームストーンの取得状況、コンテンツルーレットの消化状況、プレイ時間
-- リテイナーの出品数と、開いたリテイナーの出品リスト（単価つき）
-- クレセントアイルの進捗（知識レベル、ファントムジョブのレベル／経験値、銀貨／金貨の所持数。ゾーン内にいるときだけ取得）
+適用時の安全策:
 
-そのほか、`/tell`（送受信）とパーティ／クロスワールドパーティチャットの記録、付属アップローダーを経由して届くプラグイン設定ファイルの適用（設定ダウンリンク: 検証・バックアップ・期待ハッシュ照合・プラグイン再読み込みつき）、レベルキャップ未満の戦闘ジョブ使用時のハルオーネイヤリング（経験値+30%、Lv1〜100）の自動装備、ベンチャー完了やバディのレベルアップ可能化などを知らせるゲーム内通知、ログイン時のサマリー表示（GC軍需品の不足件数・ベンチャーの完了見込み・週間トームストーンの残り・各ハウスの最終入室からの経過日数と撤去予定日。撤去予定日まで7日を切ると警告）を行います。すべての機能はプラグインの設定ウィンドウ（v1.21.0からカテゴリ分けされたグラフィカルな表示）で個別にオン／オフできます。
+- 対象は `pluginConfigs` フォルダ配下の `.json` のみ。このプラグイン自身のフォルダは対象外。
+- リクエストに期待ハッシュがある場合、現在のファイルと一致しなければ **中止**（`aborted-stale`）し、ゲーム側で変わった設定を上書きしない。
+- 差し替え前に現在のファイルを `config-backups\<対象ファイル名>\<日時>.json` へバックアップ（30日より古いものは自動削除）。
+- 対象プラグインが **読み込み中** の場合のみ、`/xldisableplugin` → ファイル差し替え → `/xlenableplugin` の順で即時反映する。読み込まれていないプラグインは勝手に有効化せず、次回読み込み時に新しい設定が使われる（`applied-pending-load`）。
+- 適用結果の状態: `applied`（即時反映済み）/ `applied-pending-load` / `applied-unverified`（プラグイン側が読み込み時に内容を調整した可能性）/ `aborted-stale` / `failed` / `interrupted`（適用中にゲームが終了した）。
+- `/mstatus config` で受信フォルダの残件数と直近の結果を表示できる。
 
-ソースコード: [`src/MuseStatusExporter`](src/MuseStatusExporter)
+## ハルオーネイヤリング自動装備（v1.9.0〜、動作条件は v1.9.1 で改定）
 
-### 他のプラグイン・ツールとの連携
+- 対象は『白銀のワンダラー』予約特典「ハルオーネイヤリング」（アイテムID 52439、討伐経験値+30%は Lv1〜100・ファイター／ソーサラー）。
+- 動作条件は「戦闘クラス／ジョブ」かつ「そのジョブのレベルキャップ未満」かつ「Lv100以下」のすべてを満たすときだけ。キャップ判定は次レベル必要経験値（NeededExp）が残っているかで見るため、青魔導士・魔獣使いなどキャップの異なるリミテッドジョブでも個別のキャップに追随する。通常ジョブの Lv100（＝キャップ到達）では動作しない。
+- 条件を満たす間、耳スロットに別の耳飾りが付いていて、ハルオーネイヤリングが所持品（バッグ）またはアーマリーチェスト（耳）にある場合、約5秒ごとの確認で自動的に装備する（元の耳飾りとは入れ替わる）。
+- 戦闘中・カットシーン中・エリア移動中・PvPでは何もしない。装備の試行は15秒に1回まで。装備が確認できた時点でチャットに一度だけ通知する。
+- 所持していないキャラクターでは何も起きない。クラフター／ギャザラー（クラスID 8〜18）と Lv101 以上では装備しない。
+- スナップショットに `HaloneEarringEquipped`（true/false）が追加され、装備状態を Muse 側から確認できる。
 
-他のプラグインやツールがこの仕組みに接続するためのインターフェース仕様（ステータス JSON の形式、設定ダウンリンクのプロトコル、トランスポートの契約）を [連携仕様（docs/INTEGRATION.md）](docs/INTEGRATION.md) に公開しています。
+## 機能のオン／オフ設定（v1.10.0）
 
-### アップローダーアプリ（uploader-app/）
+- プラグイン一覧の歯車アイコン（またはプラグインのメインUI）から設定ウィンドウが開き、機能ごとにチェックボックスでオン／オフできる。変更は即時保存される。
+- 対象: ステータス書き出し／所持通貨／インベントリ／リテイナー情報／GC軍需品リスト取得／ハウス訪問記録／Tell記録／設定ダウンリンク／ハルオーネイヤリング自動装備。すべて初期値はオン（従来動作と同じ）。
+- 設定は Dalamud 標準のプラグイン設定（`pluginConfigs\MuseStatusExporter.json`）に保存される。
 
-`uploader-app/` フォルダには、PowerShell 版アップローダーとコレクターを統合した Windows トレイ常駐アプリ「FFXIV Status Uploader」が入っています。ステータス送信（5分ごと）とプラグイン設定の収集（1時間ごと）を常駐実行し、自動アップデートにも対応します。詳しくは `uploader-app/README.md` を参照してください。
+## メインクエスト進行の書き出し（v1.11.0）
 
-### 構成
+- スナップショットに `MainScenario` を追加: 受注中のメインクエスト（CurrentQuestName）、次のメインクエスト（NextQuestName）、最後に完了したメインクエスト、編（拡張）ごとの完了数／総数、全完走フラグ。
+- 導出方法: クエストシートのジャーナル分類（JournalGenre→JournalCategory→JournalSection）が「メインクエスト」のクエストを編順＋SortKey順に並べ、受注中リスト（QuestManager.NormalQuests）と完了フラグ（QuestManager.IsQuestComplete）から判定する。使用APIはいずれも FFXIVClientStructs.dll／Lumina.Excel.dll 実物で検証済み。
+- 設定ウィンドウの「メインクエスト進行状況を記録する」でオフにできる。ステータスチェック cron の手順17が変化を報告し、ステータスレポートの「メインクエスト進行」セクションを最新化する。
 
-- `pluginmaster.json` — Dalamud が読むリポジトリの索引
-- `plugins/<InternalName>/latest.zip` — インストール用プラグインパッケージ
-- `src/` — プラグインのソースコード
-- `uploader-app/` — トレイ常駐アップローダーアプリ
+## 共有FATE達成度の書き出し（v1.12.0）
 
----
+- スナップショットに `FateProgress` を追加: 共有FATEのある3拡張（漆黒／暁月／黄金）×6エリアについて、エリア名（ZoneName）、現在ランク（CurrentRank）、最大ランク（MaxRank）、達成数（FateProgress）、次ランクまでの必要数（NeededFates）、テリトリーIDを出力する。
+- データ元は `AgentFateProgress`（ゲーム内「FATE達成度」ウィンドウの裏側のデータ）。このエージェントはクライアントが達成度データを受信した後でないと中身を持たないため、ログイン後にFATE達成度ウィンドウを一度開く必要がある。読み取れた最新の状態はキャラ別サイドカー `mstatus-fateprogress-<Character>-<World>.json` に保持し、GC軍需品と同じ方式で毎回のスナップショットに埋め込む。1秒間隔でポーリングし、変化があれば即時書き出しする。
+- 設定ウィンドウの「共有FATE達成度を記録する」でオフにできる。ステータスチェック cron の手順19が黄金6エリアの変化を報告し、ステータスレポートの「黄金FATE達成度」セクションを最新化する。
 
-## English
+## 次のステップ
 
-### About this repository
+このプラグインはPC内にJSONを書くところまでです。Google Driveへのアップロードは `uploader` フォルダの `Upload-FfxivStatus.ps1`（方式2: Drive API＋DPAPI暗号化、モック環境で実動検証済み）が担当します。初回は `-Setup`（同意画面が進まない場合は `-Setup -Manual`）で認証し、`Register-UploaderTask.ps1` で1時間ごとの実行を登録します（手順は uploader フォルダの README を参照）。アップロード先のファイル名は `ffxiv-status.json` で、Muse側の毎時チェックは設定済みです。
 
-A custom plugin repository for Dalamud (FFXIV). The plugin itself can be installed and updated directly through Dalamud's custom repository feature. The plugin source code and the companion uploader app (runs on the PC) are published here as well.
+## ビルドについて
 
-### How to add this repository in Dalamud
+- Dalamud.NET.Sdk 15.0.0 / .NET 10（Dalamud APIレベル 15）でビルドし、コンパイル成功を確認済みです。
+- ソース一式は `MuseStatusExporter-source.zip` にあります。再ビルドする場合は Dalamud の配布アセンブリを `DALAMUD_HOME` 環境変数で指して `dotnet build -c Release` を実行してください。
+- ゲーム内での実際の値（特にコスモツールの段階・分析値）は初回実行時にJSONの中身で確認してください。想定と違う値が出た場合は教えてください。
 
-1. In game, open `/xlsettings` → **Experimental** tab.
-2. Under **Custom Plugin Repositories**, add this URL and save:
+## メインクエスト進行の取得バグ修正（v1.12.1）
 
-   ```
-   https://github.com/mippipi/MuseDalamudPlugins/raw/main/pluginmaster.json
-   ```
+- v1.11.0 の判定はジャーナルセクション名の完全一致（「メインクエスト」等）だったが、実際のセクション名は拡張名サフィックス付き（ja「メインクエスト1（新生・蒼天・紅蓮・漆黒・暁月）」「メインクエスト2（黄金のレガシー）」、en「Main Scenario (A Realm Reborn through Endwalker)」「Main Scenario (Dawntrail)」、XIVAPI v2 JournalSection で確認）のため一致せず、MainScenario が null のままだった。v1.12.1 はセクション RowId 0/1 または名前の前方一致（日英独仏）で判定する。空のMSQリストをキャッシュしないよう修正し、0件時は警告ログを出す。
 
-3. Open `/xlplugins` → **Available Plugins**, search for the plugin, and install it.
+## 共有FATE達成度の能動取得（v1.12.2）
 
-Installed plugins from this repository are updated through Dalamud itself
-(update notifications in `/xlplugins`, or automatically at launch when
-Dalamud's auto-update setting is enabled).
+- Auto FATE Grind と同じ方式で、プラグイン自らサーバへ達成度を取りに行く。共有FATEのエリア別達成数は裏側で隠しアチーブメントの進捗として管理されている（漆黒: テリトリー813–818／アチーブメント2343–2348、暁月: 956–961・960／3022–3027、黄金: 1187–1192／3559–3564。Auto FATE Grind v2.24.0.0 の配布DLLを逆コンパイルして確認）。
+- 取得リクエストは2種類: `Achievement.RequestFateProgressTab`（タブ単位。AgentFateProgress 側にもデータが入る）と、メインコマンド1000（エリア別アチーブメント進捗の要求）。応答は `Achievement.ReceiveAchievementProgress` へのフック（ClientStructs の Addresses 経由）で記録する。フックに失敗しても従来の Agent 読み取りは動き続ける。
+- ランクは拡張ごとのランクサイズから算出する（漆黒／暁月: 6＋60＝66でランク3、黄金: 6＋20＋40＝66でランク4。黄金の [6, 20, 40] は配布DLL内の初期値バイト列から確認）。NeededFates は「次ランクまでの残り数」（カンスト時は0）として出力する。エリア名は TerritoryType の PlaceName から引く（黄金6エリアの名称は XIVAPI v2 で照合済み）。
+- リクエストは全エリア判明まで30秒間隔、判明後は10分間隔で自動更新する。ログアウト時に記録を消去する。FATE達成度ウィンドウを開く必要はなくなった（Agent にデータがある場合はそちらを優先する）。
 
-### Plugin: Muse Status Exporter
+## ハルオーネイヤリング自動装備のレベルキャップ判定修正（v1.12.3）
 
-Exports the logged-in character's status to per-character JSON files in the
-plugin's config folder:
+- v1.9.1 のキャップ判定は `GetClassJobNeededExp <= 0` を「キャップ到達」とみなしていたが、実データでは Lv100 でも NeededExp は 29,023,000（次レベルに必要な経験値）を返し、0 にならない。このため 2026-11-20 16:24 の書き出しで、Ren Stella の戦士（Lv100）にハルオーネイヤリングが誤って自動装備された（ユーザー指摘で判明）。
+- v1.12.3 の判定は2段構え: レベル100以上では動作しない（イヤリングの効果範囲外）＋ `PlayerState.GetCurrentClassJobMaxLevel()`（プレイ中ジョブのキャップをゲーム自体が返す関数。Dalamud 同梱の FFXIVClientStructs.dll 実物で存在を確認）で「現在レベル ≧ キャップ」なら動作しない。リミテッドジョブ（青魔導士・魔獣使い）の低いキャップもこの関数が返すため、値はハードコードしていない。
+- 誤装備されたイヤリングを自動で元に戻すことはしない（戻し先の装備をプラグインは知らないため）。気になる場合は対象ジョブのギアセットを再適用すれば元の耳飾りに戻る。
 
-- Job/class levels and EXP
-- Cosmic Exploration scores and cosmic tool stages
-- Saved gearsets and currently equipped items
-- Currencies, inventory containers, retainer venture state
-- Grand Company supply/provisioning requests (read from the addons' AtkValues)
-- Housing visit history
-- Last entry and demolition date (45 days after the last entry) of the known houses (only the owner's / an FC member's entry counts, using the ownership learned from each house's placard)
-- The logged-in character's Free Company (id, name, tag)
-- Main scenario quest progress
-- Shared FATE progress for all 18 zones (requested from the server,
-  Auto FATE Grind style — no need to open the FATE window)
-- Chocobo companion (buddy) rank and EXP, including level-up readiness
-- Weekly tomestone progress, daily duty-roulette completion state, and play time
-- Retainer market listing counts, plus the opened retainer's listings with unit prices
-- Occult Crescent progress (knowledge level, phantom job levels/EXP, silver/gold currency counts; read only while inside an Occult Crescent zone)
+## FATE達成度の値の正規化（v1.12.4）
 
-It also records `/tell` messages in both directions and party / cross-world party chat, applies plugin configuration
-files delivered through a companion uploader (config downlink, with
-validation, backups, an expected-hash guard and plugin reload), and keeps
-the Halone Earring (EXP +30%, levels 1–100) equipped while a battle
-class/job below the level cap is active. It also prints in-game chat notifications when a retainer venture completes, when the buddy becomes ready to level up, and when a new daily GC supply list is captured, plus a one-time login summary (GC supply shortage, the soonest venture completion, the weekly tomestone remainder, and each known house's days since last entry and demolition date, with a warning once 7 or fewer days remain). Every feature has its own
-toggle in the plugin's settings window, which since v1.21.0 is grouped
-into six categories in a graphical sidebar layout (Auto FATE Grind style).
+- AgentFateProgress の生値はアチーブメント方式と形が違う: FateProgress は「累計」ではなく現在のランク帯の中での件数、NeededFates は「残り」ではなく帯の総数、未着手エリアはランク0、MaxRank は 0 を返す（実データで検証: ランク3のエリアが FateProgress 7 と記録されており、累計ならランク3に必要な26件未満で矛盾する）。
+- v1.12.4 は Agent 読み取り時にカタログのランクサイズで換算し、アチーブメント方式と同形式に揃える: FateProgress = 最大ランクまでの累計達成数（総数66）、NeededFates = 次ランクまでの残り、ランクは1始まり、MaxRank は実値（漆黒／暁月3、黄金4）。
+- ステータスレポートの FATE達成度とコスモエクスプローラーは、ジョブレベルと同じ形式（「ランク（達成数 累計/66、約%）」「最大まで」、「ツール段階（スコア）」「完成まで」）で表示する（2026-11-20 のユーザー指示）。
 
-Source code: [`src/MuseStatusExporter`](src/MuseStatusExporter)
+## 調達任務期限（GC軍需品）をウィンドウなしで取得できるか（2026-11-20 調査）
 
-### Integrating other plugins and tools
+- 読み取り先は存在する: `AgentGrandCompanySupply`（常駐シングルトン）の `SupplyProvisioningData*`（@0x60）に、軍需品8件（`_supplyData` @0x40）と調達品3件（`_provisioningData` @0x580）が `SupplyProvisioningItem`（ItemId / ExpReward / SealReward / NumRequested / ItemName）として格納される。`ItemArray`（@0x68）＋ `NumItems`（@0x78）にも統合リスト（0-7=軍需品、8-10=調達品、11+=希少品納品）がある。いずれも実DLL＋ClientStructs ソースで確認済み。つまり「読む」だけならウィンドウは不要。
+- v1.5.0〜v1.6.2 で「Agent は null」と結論したのは、エージェント自体ではなくデータ未着（サーバーからまだ送られていない）状態を見ていた可能性が高い。
+- 能動取得の関数は無い: FATE の `Achievement.RequestFateProgressTab` のような専用リクエスト関数は、AgentGrandCompanySupply / AgentContentsTimer のどちらにもバインディング上存在しない。データはサーバー送信で、GC窓口で納品窓を開いた時と、コンテンツ情報タイマーの詳細（調達任務期限）を開いた時に届くことが分かっている。タイマー一覧を開いただけで AgentGrandCompanySupply 側にもデータが入るかは未検証（AgentContentsTimer の格納領域 0x1820 は未マッピングで、そちらからは読めない）。
+- リストはサーバーが決める（キャラごと・毎日5:00更新・ギャザクラのレベル依存）ため、シートからのローカル算出は不可。
+- 次の実験（v1.14.0 で実装済み）: スナップショットごとに Agent の状態を `GcAgentProbe` として記録する。ログイン直後／タイマー一覧を開いた後／詳細を開いた後／全部閉じた後の各時点で実測し、どの操作でデータが常駐するかを確定する。
+- パケット送信や未公開ネイティブ関数の直接呼び出しは対象外（バインディングに無く、規約・パッチ追従の面でも不適）。
 
-The interface specification for connecting other plugins and tools to this system (the status JSON format, the config downlink protocol, and the transport contract) is published in the [integration spec (docs/INTEGRATION.md)](docs/INTEGRATION.md).
+## アップローダー v6（to_muse フォルダへの集約、2026-11-20）
 
-### Uploader app (uploader-app/)
+- 送信ファイル（ffxiv-status-*.json / ffxiv-tells-*.json / ffxiv-config-results.json / ffxiv-config-requests.json / FF14-pluginConfigs-light-*.zip）を、Drive ルートではなく `to_muse` フォルダへ集約する（ユーザーの指示）。
+- フォルダはアップローダー自身が作成する（drive.file スコープでは他アプリ作成のフォルダは見えない）。フォルダ ID はスクリプト横の `to-muse-folder.json` に保存して再利用し、見つからなければ名前で検索→無ければ作成。
+- 新規アップロードは parents 指定でフォルダ内に作成。既存ファイルは parents を確認してフォルダ外なら移動。さらに毎回、パターン一致ファイル全体を走査してフォルダ外の残りを移動する（過去の zip も対象）。フォルダ解決に失敗した場合はルート運用へフォールバックし、アップロード自体は止めない。
+- Muse 側のチェック（cron）はファイル名検索ベースのため、移動の影響なし。
+- フィクスチャ検証済み（21項目全PASS: フォルダ作成は1回だけ・状態ファイル保存・全ファイルがフォルダ内・残存 zip の回収・v5 のダウンリンク動作回帰なし）。
+- 配布: FfxivStatusUploader-v6.zip（Upload-FfxivStatus.ps1 の上書きのみ）。
 
-The `uploader-app/` folder holds "FFXIV Status Uploader", a Windows tray application that unifies the PowerShell uploader and the collector. It runs the status sync (every 5 minutes) and the plugin-config collection (every hour) as a resident app and updates itself automatically. See `uploader-app/README.md` for details.
+## バディ（チョコボ）のランク・経験値の取得（v1.13.0、2026-11-20）
 
-### Layout
+ユーザーの要望「バディのレベルと経験値も知りたい。レベルアップ可能な状態になったら教えて」で追加。スナップショットに `Buddy` セクション（Name / Rank / CurrentExp / MaxExp / SkillPoints / LevelUpReady）を追加した。
 
-- `pluginmaster.json` — the repository index Dalamud reads
-- `plugins/<InternalName>/latest.zip` — the installable plugin package
-- `src/` — plugin source code
-- `uploader-app/` — the tray uploader app
+- ランク・現在EXP・名前・スキルポイントは常駐構造体 `UIState.Instance()->Buddy.CompanionInfo`（DLL実物で検証: CurrentXP=uint32、Rank=byte、NameString あり）から取得。ウィンドウを開く必要はない。
+- 現在ランクの最大EXPはバディウィンドウの数値配列 `BuddyNumberArray.Instance()`（CurrentExp / MaxExp / BuddyRank を持つ）から取得。ただし常時データがあるとは限らないため、最後に得られた MaxExp をキャラ別サイドカー（`mstatus-buddy-<キャラ>-<ワールド>.json`）に保持してフォールバックする。
+- LevelUpReady = MaxExp 既知 かつ CurrentExp >= MaxExp かつ Rank < 20（ランク上限）。EXPが満タン＝サベネアの野菜を使うとランクが上がる状態（フィールドでバディを呼び出している状態でも使用可）。
+- バディ未解放（名前なし・ランク0・EXP0）の場合はセクション自体を出さない（null）。
+- 設定に12番目のトグル「バディ（チョコボ）のランクと経験値を記録する」（ExportBuddy、既定ON）を追加。
+- Muse側のステータスチェック（手順20）: 初回はベースラインのみ（レポートの「バディ」セクションは作成）。以後はランク・経験値の変化を報告し、LevelUpReady が false→true になった回は「バディがレベルアップ可能になりました」として明示報告する（true の間は繰り返さない）。
+- ビルド成功（0警告・0エラー、AssemblyVersion 1.13.0.0 を Cecil で確認）。配布は GitHub リポジトリ（pluginmaster 1.13.0.0、latest.zip の md5 一致を公開URLで確認）と Google Drive `from_muse`（zip）の両方。
+
+## v1.14.0 の追加機能（2026-11-20、ユーザー提案7件への対応）
+
+ユーザーの提案7件（ゲーム内アラート／週間トームストーン／装備のマテリア情報／リテイナーの出品・売上／デイリー消化状況／プレイ時間／GC軍需品のウィンドウなし取得）に対応した。
+
+- **ゲーム内アラート（新規）**: リテイナーのベンチャー完了、バディのレベルアップ可能化、GC軍需品の新しいリスト取得（1日1回）を、ゲーム内チャットへ通知する。各イベントはキャラ別サイドカー（`mstatus-alerts-<キャラ>-<ワールド>.json`）で「通知済み」を管理し、同じイベントを繰り返し通知しない。ベンチャー完了はスナップショットの値が変わらない（完了時刻は事前に記録されている）ため、書き出し間隔（10秒）で常駐データから直接判定する。
+- **週間トームストーン（新規）**: スナップショットに `WeeklyTomestone`（Acquired / Limit）を追加。実DLLで確認した `InventoryManager.GetWeeklyAcquiredTomestoneCount()` と static な `InventoryManager.GetLimitedTomestoneWeeklyLimit()` を使用。週制限トームストーンの今週の取得数と週間上限がそのまま読めるため、差分の自前集計は不要だった。
+- **装備のマテリア情報（対応済みだった）**: ギアセット・装備中アイテムのマテリア名は v1.13.0 以前から `GearItemEntry.Materia`（名前の配列）として書き出し済みだった（実データでも確認: 採掘師の副道具に5個分のマテリア名あり）。v1.14.0 での追加作業はなし。Muse 側のレポートで見せる扱いに寄せる。
+- **リテイナーの出品（新規・一部）**: `RetainerEntry` に `MarketItemCount`（出品数）と `MarketExpireAt`（出品期限）を追加（`RetainerManager.Retainer` の常駐フィールド、実DLLで確認）。召喚中のリテイナーについては `InventoryType.RetainerMarket` コンテナ＋ `InventoryManager.RetainerMarketPrices`（ulong 配列）から出品リスト（アイテム・個数・単価・HQ）を取得し、キャラ別サイドカー（`mstatus-retainermarket-<キャラ>-<ワールド>.json`）に保持して `RetainerMarket` セクションとして書き出す。**販売履歴は対象外**: 履歴データは常駐しておらず、リテイナーの販売履歴画面を開いたときにサーバーから届くため、常時記録はできない。
+- **デイリー消化状況（新規・値の意味は要検証）**: スナップショットに `RouletteCompletion` を追加。`PlayerState.ContentRouletteCompletion`（byte×10、実DLLで確認）の生値を `RawValues` としてそのまま書き出し、ContentRoulette シートの行ID N と byte N-1 を対応付けた `Entries`（RouletteId / Name / Value）も併記する。byte の意味（消化済み=何か）はバインディングに記載がなく、対応付けも推定のため、実プレイのデータで裏取りしてから「消化済み」判定に使う。
+- **プレイ時間（新規）**: スナップショットに `PlayTime`（SessionStartedAt / SessionSeconds / TodaySeconds / Days=直近14日の日別秒数）を追加。セッションはログイン後の初回書き出しから開始し、書き出しごとに経過を日別合計へ加算（日付またぎは0時で分割）、ログアウト時にも精算する。日別合計はキャラ別サイドカー（`mstatus-playtime-<キャラ>-<ワールド>.json`、35日分保持）。
+- **GCエージェントのプローブ（実験・新規）**: スナップショットに `GcAgentProbe` を追加。`AgentGrandCompanySupply` の状態（DataPresent、軍需品/調達品の件数と内容、ItemArray の件数と内容）を毎回記録する。上記「ウィンドウなし取得」調査の「次の実験」を実装したもので、どの操作でエージェントにデータが入るかを今後の書き出しから追える。なお読み取り自体は従来から `BuildGrandCompanySupply` が Agent 優先で行っている（データが無いため窓キャプチャに落ちていた）。
+- **変更検出の対象外**: PlayTime と GcAgentProbe は読むたびに値が変わるため、変更検出ペイロードには含めない（他の変更や5分ハートビートの書き出しに同梱される）。
+- 設定トグルを6個追加（週間トームストーン／ルーレット消化／プレイ時間／GCエージェント（実験）／リテイナー出品／ゲーム内通知。いずれも既定ON、合計18個）。
+- ビルド成功（0警告・0エラー、AssemblyVersion 1.14.0.0 を確認）。配布は GitHub リポジトリ（pluginmaster 1.14.0.0）＋ Release `MuseStatusExporter-v1.14.0` と Google Drive `from_muse`。
+
+## v1.15.0 の追加機能（2026-11-21、ユーザー提案1・2への対応）
+
+ユーザーの提案7件のうち「1. ログイン時サマリー表示」と「2. ハウス自動撤去の期限警告」を実装した。あわせてユーザーの追加指定により、ハウスについてはログイン時に既知の3軒すべての「最終入室からの経過日数」と「撤去予定日」を表示する。
+
+- **ログイン時サマリー（新規）**: ログイン後、セッション最初のスナップショットが揃った時点でチャットログへ1回だけ表示する。内容は GC軍需品の不足件数（所持品＋装備から所持数を数え、要求数に満たない品目の件数。Muse側と同じ判定）、ベンチャー（完了済みがあればその件数、なければ最短の完了時刻と残り時間）、週間トームストーン（取得数／上限と残り、上限到達時はその旨）。プラグイン再読み込み時（ログイン済みのまま有効化された場合）も表示する。`/mstatus summary` でいつでも再表示できる。スナップショットが3分待っても得られない場合は、ハウス分だけでも表示する。
+- **既知のハウスの期限管理（新規）**: 既知の3軒（Ramuh 第22区42番地 FCハウス／Ixion 第5区40番地 個人ハウス／Fenrir 第22区37番地 FCハウス）の最終入室を、全キャラ共有のストア（`mstatus-housing-known.json`）で管理する。入室記録（HousingVisits）が既知のハウスに一致したら、そのハウスの最終入室を訪問時刻で更新する。一致判定は入室記録の生 Ward／Plot について「表示番号」と「表示番号−1」の両方を許容する（生値の基数が未確定のため、Muse側チェックと同じ扱い）。ストアが無い場合は、ユーザーが確認した基準値「2026-10-31に3軒とも入室」で初期化する（Seeded フラグつき。実訪問で上書きされる）。
+- **スナップショットへの追加**: `KnownHouses`（World / Ward / Plot / Kind / LastEntryAt / DaysSinceEntry / DemolitionDate / DaysUntilDemolition）を追加。Ward／Plot は表示上の番号、DemolitionDate は最終入室の45日後。日数カウンタが単独で進むため、変更検出ペイロードには含めない（PlayTime と同じ扱い）。
+- **ログイン時のハウス表示と警告**: ログインサマリーに3軒分の行（最終入室からの経過日数、撤去予定日、残り日数）を含める。撤去予定日まで7日以下になったら警告行を追加し、過ぎていたらその旨の警告を出す。
+- 設定トグルを2個追加（ログイン時サマリー／ハウスの入室期限表示。いずれも既定ON、合計20個）。
+- ビルド成功（0警告・0エラー、AssemblyVersion 1.15.0.0 をDLL内の文字列で確認）。パッケージ `MuseStatusExporter-plugin-v1.15.0.zip`（86,962 bytes、md5 80afe2c65173be7dc850cb00de0d1243）。
+- 未検証事項: 実機での表示確認は未実施（次回ログイン時にサマリーが出ること、入室で最終入室が更新されること）。入室記録の生 Ward／Plot の基数（0始まり／1始まり）も引き続き未確定で、一致判定は両対応のまま。
+
+## v1.15.1 の修正（2026-11-21、入室判定の訂正）
+
+ユーザーの実機テストで判明した不具合の修正。Fenrir の Momo Candy はハウスに入室していない（ログイン後、区内の土地の上に立っていただけ）なのに、Fenrir ハウスの最終入室が当日へ更新されていた。
+
+- **原因**: 入室記録（HousingVisits）は屋外の滞在も記録する（Kind = "Outdoor"）。v1.15.0 の既知ハウス照合は Kind を見ていなかったため、土地の上に立っただけの Outdoor 記録（Fenrir 生 Ward 21 / Plot 36）でも最終入室が更新されていた。なお Ramuh（生 21/41、Indoor）と Ixion（生 4/39、Indoor）の更新は実際に屋内へ入室した正しい記録。
+- **生 Ward／Plot の基数が確定**: 上記3件の実データから、生値は **0始まり（表示 = 生値+1）** と確定した（Ramuh 表示22区42番地 = 生21/41、Ixion 表示5区40番地 = 生4/39、Fenrir 表示22区37番地の土地 = 生21/36）。従来の「両対応」照合を廃し、生値 = 表示−1 の完全一致に変更。
+- **修正**: 既知ハウスの更新は Kind = "Indoor" の記録だけを対象にした。あわせて、v1.15.0 で作られたストア（StoreVersion 1）は初回読み込み時に全キャラの入室記録サイドカーから屋内分だけで再構築する移行を入れた（Fenrir は基準値 2026-10-31 に戻り、Ramuh / Ixion は実際の入室 2026-11-21 が残る）。
+- Muse 側の定期チェック（手順11）も同じ基準（Indoor のみ・生値+1 = 表示）に合わせて更新した。
+
+## v1.16.0 の追加（2026-11-21、所有者／FCメンバー判定とFC記録）
+
+ユーザーの指示: 「個人ハウスの場合は所有者、FCハウスの場合はFCメンバーが入室したことを正確に把握してください」「まだ学習していない場合は最終入室を所有者未確認として表示してください」「ログインしたキャラのFCが分かるなら記録するようにしてください」。
+
+- **所有情報の学習**: ハウスの所有者情報（所有者名・FC名・FCタグ）はクライアント内に常駐せず、看板（プラカード）を開いたときに届く `HousingSignboardPacket` の中にだけある（実DLLで確認）。`AgentHousingSignboard.ReadPacket` へのフック（FATE フックと同じ方式、アドレス未解決時は機能だけ無効化）で、看板が開かれるたびに既知のハウス分を学習して共有ストア（StoreVersion 3）に保存する。FCタグ付きのパケット = FCハウス（所有者名 = FC名）、タグなし = 個人ハウス（所有者名 = 所有者名）と判定する。学習したときはチャットに表示し、即時書き出しする。設定トグル「看板を開いたときにハウスの所有情報を学習する」（21→22個目は下記の FC 記録）。
+- **入室の資格判定**: 学習後は、個人ハウスは所有者本人の入室、FCハウスは所有FCのメンバーの入室（入室時に読む FC名、なければ FCタグで照合）だけが最終入室を進める。入室記録には入室者の FC（VisitorFcName / VisitorFcTag）と判定結果（EntryQualified）を残す。未学習の間は従来どおり入室を受け付けるが、その最終入室は「未確認」になる。
+- **所有者未確認の表示**: 所有者確認を経ていない最終入室（基準値・学習前の入室・再構築分）は `LastEntryVerified = false` として保持し、スナップショットでは `LastEntryUnverified`、ログインサマリーでは行末に「（所有者未確認）」を付けて表示する。学習後に資格のある入室があると確認済みになる。
+- **FCの記録**: スナップショットに `FreeCompany` セクション `{ Id, Name, Tag }` を追加した（FC情報プロキシ + 自キャラのスポーンデータから読む。何も読めない場合は null）。変更検出ペイロードにも含む。設定トグル「ログイン中のキャラクターのFC（名前・タグ）を記録する」。
+- Muse 側の定期チェック（手順11）は、KnownHouses を正として最終入室日を last-entry.md へ反映する形に更新した。
+
+## v1.17.0 の追加（2026-11-21、入室更新の通知）
+
+ユーザーの指示: 「資格ありのキャラがハウスに入室した際にも、最終入室と撤去予定日が更新されたことを知らせるように改修してください」。
+
+- 既知のハウスの最終入室が資格のある入室で実際に進んだときに、チャットへ通知するようにした: 「ハウス {ワールド} 第{区}区{番地}番地（{種別}）: 最終入室を更新しました（撤去予定日 {日付}、あと {日数} 日）」。所有情報が未学習で未確認のまま更新された場合は「（所有者未確認）」を付ける。
+- 資格のない入室、最終入室が進まなかった入室（既により新しい記録がある場合）では通知しない。入室の記録自体が重複抑制されるため、同じ入室で繰り返し通知されることもない。
+- 設定トグル「資格のある入室でハウスの最終入室が更新されたら知らせる」を追加（合計23個）。
+
+## v1.18.0 の追加（2026-11-21、耐久度警告と他キャラ集約）
+
+ユーザーの選択: 提案 6（装備の耐久度記録と低下警告）と 8（他キャラの状況をログインサマリーに集約）を実装。
+
+- 訂正: 耐久度の「記録」自体は既に実装済みだった。装備中アイテムの Condition（パーセント）と Spiritbond は装備書き出しの当初から Equipped に記録されている（INTEGRATION.md にも記載済み）。今回追加したのは「低下警告」である。
+- 耐久度警告: 装備中アイテムの最低耐久度が 30% を下回るとチャットで知らせる（「装備の耐久度が低下しています: {アイテム名} {n}%（修理をおすすめします）」）。1回の低下につき1回だけ通知し、修理で最低値が 50% 以上に戻ると再び通知可能になる。ログインサマリーにも、最低値が 30% 未満のときだけ「装備耐久度: 最低 …」の行を出す。
+- 他キャラ集約: ログインサマリーに、同じ PC 内の他キャラの最新ステータスファイル（同じ設定フォルダ）から「ベンチャーが完了して受け取り待ちのリテイナー」の件数をキャラごとに1行で出す（例: 「他キャラ Ren Stella（Ramuh）: ベンチャー完了 4 件」）。ファイルが古いキャラはログインしていないということなので、完了記録はそのまま受け取り待ちとみなす。ハウス期限は既知ハウスストアで共有済みのため重ねて出さない。
+- 設定トグル「装備の耐久度が低下したら知らせる」「ログインサマリーに他キャラのベンチャー完了をまとめる」を追加（合計25個）。
+- 実データでの事前検証: 全6キャラ分の実スナップショットで集約ロジックを模擬実行し、現時点では完了ベンチャー 0 件・最低耐久度は全員 30% 以上（Ren の最低は 45%）で、誤通知が出ないことを確認した。
+
+## v1.19.0 の追加（2026-11-21、チャット記録の拡張: Tell送受信＋パーティ）
+
+ユーザーの指示: Tell と PT（パーティ／クロスワールドパーティ）のチャット送受信を記録し、Drive に保存する。レポート化はしない（Tell は件数のみ別途通知）。
+
+- 記録対象を拡張: 従来の受信テル（TellIncoming）に加え、送信テル（TellOutgoing）、パーティ（Party）、クロスワールドパーティ（CrossParty）を記録する。送信テルの Sender 欄には宛先が入る（ゲーム自身のチャットログと同じ形式）。
+- 保存先は従来と同じ `ffxiv-tells-<キャラ>-<ワールド>.json`（トレイアプリの同期対象パターンがこのファイル名のため、新ファイルは作らない）。各エントリに `Channel`（TellIncoming / TellOutgoing / Party / CrossParty）を追加。v1.19.0 より前のエントリには Channel が無く、それらは受信テルとして扱う。
+- 保持件数を 200 件から 1,000 件へ拡大（PT チャットの流量に対応）。
+- 設定トグル「パーティチャット（クロスワールドPT含む）を記録する」を追加（合計26個）。Tell のトグルは「Tell（送受信）を記録する」に改称し、送受信の両方を制御する。
+
+## v1.20.0 の追加（2026-11-21、クレセントアイル進捗の記録）
+
+ユーザーの指示: 「自作プラグインを機能拡張してクレセントアイルの進捗状況もレポートできるようにしてください」。
+
+- スナップショットに `OccultCrescent` セクションを追加した。クレセントアイル（蜃気楼の島）のゾーン内にいるときだけ読み取れ、それ以外の場所ではセクション自体が無い（コスモエクスプローラーと同じ扱いで、Muse 側は最後に取得できた値を引き継ぐ）。
+- 記録内容:
+  - 知識レベル（`KnowledgeLevel`）と、ゾーンのレベルシンク適用後の実効レベル（`KnowledgeLevelEffective`）。レベルそのものは PlayerState のコンテンツ値（7=自身のレベル、6=シンク後の実効レベル）から読む（BOCCHI の本番コードと同じ経路。state の CurrentKnowledge / NeededKnowledge からは算出しない）。
+  - 知識経験値の現在値と次のレベルに必要な値（`CurrentKnowledge` / `NeededKnowledge`、director の state から）。
+  - 現在装備中のファントムジョブ（`CurrentSupportJob` = MKDSupportJob の RowId、`CurrentSupportJobName`）。
+  - ファントムジョブごとのレベル・現在経験値・次レベルに必要な経験値・レベル上限（`SupportJobs`）。state の配列のインデックスは MKDSupportJob の RowId と一致する（BOCCHI の SupportJobId 列挙で確認）。次レベル必要経験値は MKDGrowDataSJob のサブ行（ジョブ×レベル）の値。解放済み（レベル1以上）のジョブだけを載せる。
+  - 通貨: 南征編の銀貨（アイテム 45043）・金貨（45044）、北征編の銀貨オーボル（51975）・金貨オーボル（51976）の所持数。いずれも通常アイテムなので InventoryManager の所持数で数える（BOCCHI の本番コードと同じ方式。state 側の Silver / Gold は使わない）。
+- 設定トグル「クレセントアイルの進捗（知識レベル・ファントムジョブ・銀貨／金貨）を記録する」を追加（合計27個）。
+- 実機確認は未実施: ユーザーがゲーム内でプラグインを v1.20.0 に更新し、クレセントアイルに入ってデータを送ると、ステータスレポートに「クレセントアイル」セクションが作成される。
+- 実機確認（2026-11-21 13:21）: Ren Stella のクライアントで v1.20.0 が動作し、クレセントアイル入場時に OccultCrescent セクション（知識レベル9ほか）が取得できた。
+
+## v1.21.0 の変更（2026-11-22、設定ウィンドウのグラフィカル化）
+
+ユーザーの指示: 「自作プラグインの設定リストをカテゴリに分けて見やすくできませんか？ Fate Auto Grindのようなグラフィカルな表示がいいです」（デザイン参考として Auto FATE Grind の設定画面のスクリーンショットあり）。
+
+- 設定ウィンドウ（ConfigWindow）を全面刷新した。従来は27個のチェックボックスを縦に並べただけだった。
+  - 左サイドバーに6カテゴリ（ステータス／進行状況／GC・リテイナー／ハウス／チャット・通知／システム）をアイコン付きで並べ、選択中は紫のハイライト＋各カテゴリの有効数（n/27形式ではなくカテゴリ内の n/m）を表示する。
+  - 右側はカテゴリページ。セクション見出し（グレーの小見出し）の下に角丸パネルを置き、各行は「ラベル左・トグルスイッチ右」で、行間には区切り線を引く（Auto FATE Grind の設定画面と同じ構成）。
+  - チェックボックスの代わりに、ドローリストで描くピル型トグルスイッチ（オン=紫、ノブは白丸）を使う。
+  - ヘッダーに「有効な機能: N / 27」と細いプログレスバーを表示する。
+  - カテゴリごとに「すべてオン」「すべてオフ」ボタンを付けた。
+  - 長いラベルは短縮し、元の説明はツールチップ（ホバー表示）に移した。
+  - ウィンドウ全体をダーク基調（背景・パネル・枠線の色をスタイルで指定し、PreDraw/PostDraw で push/pop）にした。
+- 設定項目そのもの（Configuration のフィールド27個、既定値、保存形式）は変更していない。既存の設定ファイルはそのまま使える。
+- 実機確認は未実施: ユーザーがゲーム内でプラグインを v1.21.0 に更新し、設定ウィンドウを開いて表示とトグルの動作を確認する。
+- 実機確認（2026-11-22 03:24、ユーザーのスクリーンショット）: 新しい設定ウィンドウが表示され、サイドバーのカテゴリ・有効数・トグルスイッチは正常。ただし「すべてオフ」ボタンが右端で少し欠ける不具合が報告された（→ v1.21.1 で修正）。
+
+## v1.21.1 の修正（2026-11-22、ボタンの欠け修正）
+
+- ユーザー報告: 設定ウィンドウのカテゴリページ右上にある「すべてオフ」ボタンが少し欠けている。
+- 原因: ボタン列の幅を固定値（テキスト幅＋44px）で見積もっていたため、実際のフレームパディング分が不足し、右端に寄せた際にボタンがはみ出していた。あわせて WindowPadding 分を余分に加算していた。
+- 修正: ボタン列の幅を、実行時のスタイル値（FramePadding ×4 ＋ ItemSpacing）から正確に計算するようにした。
+- 設定項目・保存形式は不変。実機確認はユーザーの更新後に行う。
+
+## v1.21.2 / v1.21.3 の変更（2026-11-22、プラグイン説明文の短縮）
+
+ユーザーの指示: 「プラグインの説明が長すぎます。機能の概要を日本語で短く分かりやすく表現してください」「日本語だけでなく英語でも記載してください」。
+
+- マニフェストの Description（プラグインインストーラに表示される説明）を、英語の変更履歴形式の長文から、機能概要のみの日英併記（日本語→英語、4段落ずつ、合計1,513字）に書き直した。Punchline も日英併記の短文にした。
+- 機能・設定・保存形式は不変（コードは v1.21.1 と同一）。
+- v1.21.2 は日本語のみの説明でコミットしたが、Release 作成前に英語併記の追加指示があったため Release は作らず、v1.21.3 に差し替えて公開した。
+
+## v1.21.5 の変更（2026-11-22、設定ウィンドウの言語切り替え）
+
+- ユーザー依頼（2026-11-22 03:37）: 設定言語に日本語／英語の切り替えボタンを付け、それぞれの言語でメニューを作成する。
+- Configuration に UiLanguage（0=日本語、1=英語）を追加（機能トグルではないため総数27は不変、既存の設定ファイルでは初期値=日本語）。
+- タイトル行右端に「日本語」「English」ボタン（使用中は紫ハイライト）を追加し、即時保存。ウィンドウタイトルも言語に追随（WindowName の ### 以降は不変のため位置・サイズは維持）。
+- カテゴリ名6件・セクション名8件・全27項目のラベルとツールチップ・ヘッダー文言・「すべてオン／オフ」をすべて日英併記化した。
+- インストーラの説明文にも言語切り替え対応の一文を日英双方へ追加した。
+
+## v1.21.4 の修正（2026-11-22、「すべてオフ」ボタンの欠け・再修正）
+
+- ユーザー報告（2026-11-22 03:30）: v1.21.1 の修正後も「すべてオフ」ボタンが欠けたまま。
+- 真の原因: ボタンの幅ではなく右端の位置計算だった。タイトル描画後（カーソルが次行左端に進んだ状態）で GetContentRegionAvail() を測り、タイトル開始位置（アイコン分ずれた X）に加算していたため、計算上の右端が実際の右端より約25px はみ出していた。v1.21.1 は幅の見積もりだけを直したため直らなかった。
+- 修正: ボタン列の右端を GetWindowContentRegionMax().X（コンテンツ領域の右端）に直接そろえる方式に変更した。
+
+## v1.22.0 の追加（2026-11-22、ゲーム内レポート画面）
+
+- ユーザー依頼（2026-11-22 04:11）: 自作プラグインにレポート画面を追加する。保留理由だった v1.21.5 の更新問題は、同日のパッケージ修正（成果物マニフェストの上書きが原因で InternalName が欠落していた）を経て解消し、ユーザーがインストール成功を確認したため実装した。
+- 新規ファイル ReportWindow.cs: ステータスレポートと同じ項目を表示するゲーム内ウィンドウ。概要（キャラ・現在のジョブ・FC・ギル）、ジョブレベル、コスモエクスプローラー（ツール段階・スコア）、GC軍需品（所持数・不足数をその場で計算。所持数はインベントリ＋装備中、HQ/NQ合算、アイテムIDは %1,000,000 で正規化）、ハウスの最終入室と撤去予定日（所有者未確認の表示つき）、メインクエスト進行、FATE達成度、バディ、週間トームストーン、リテイナー（ベンチャー完了時刻・出品件数・出品リスト合計）、クレセントアイル（知識レベル・ファントムジョブ・通貨）。
+- 他キャラクターはタブ切り替え表示（プラグイン設定フォルダの ffxiv-status-*.json を読み取る、v1.18.0 の他キャラ集約と同じ方式）。現在のキャラはライブスナップショット（lastBuiltSnapshot）を使う。開くたびに再読み込みし、ヘッダの「更新」ボタンでも再読み込みできる。
+- 起動経路（ユーザー追加指示 2026-11-22 04:28）: `/mstatus report` で開閉。プラグインインストーラの「Open」ボタン（OpenMainUi）もレポート画面を開くよう配線を変更した（従来は設定画面）。「Settings」ボタン（OpenConfigUi）は従来どおり設定画面を開く。
+- 見た目は設定ウィンドウと同じダークバイオレットテーマ＋パネル表示。表示言語は UiLanguage 設定に従い、見出し・ラベルは日英両対応、ウィンドウタイトルも言語に追随する。
+- パッケージングは再発防止手順どおり、ビルド成果物（bin/Release）の3ファイルをそのまま zip 化し、公開前に zip 内マニフェストの InternalName / AssemblyVersion（1.22.0.0）を確認した。
+
+## v1.22.1 の変更（2026-11-22、NPC操作中の書き出し防止＋レポート画面の言語ボタン）
+
+- ユーザー依頼（2026-11-22 04:34）: ロールプレイング（シングルインスタンス）でNPCを操作している間、実キャラのデータがNPC名義のファイル（ffxiv-status-<NPC名>-<ワールド>.json）で書き出されてしまう問題への対応。当初は既存ファイルの削除や実キャラ登録簿による掃除も検討したが、誤削除防止のためユーザーが削除機能の実装を中止し（同日04:37）、書き出し防止のみを実装した。ファイル削除は一切行わない。
+- 書き出し防止: TryExport の入口にガードを追加した。判定は Dalamud API 15 の IPlayerState.CharacterName（実キャラ名。実装がゲームの PlayerState 構造体の名前フィールドを読むことを Dalamud.dll の IL で検証済み。同構造体のジョブレベル等はNPC操作中も実キャラの値のままであることを過去に実測）と LocalPlayer の表示名を比較し、不一致ならNPC操作中として書き出しを丸ごとスキップする（ファイルを作らない・上書きしない）。実キャラ名が読み取れない場合は従来どおり書き出す安全側フォールバック。/mstatus の結果メッセージも、NPC操作中はその旨を表示するよう分岐を追加した。
+- レポート画面の言語ボタン（ユーザー追加指示 2026-11-22 04:38）: ReportWindow のタイトル行右端（「更新」ボタンの左隣）に、設定ウィンドウ（v1.21.5）と同じ「日本語」「English」ボタンを追加した。共通の Configuration.UiLanguage を即保存し、レポート画面のタイトル・見出し・ラベルが即切り替わり、設定ウィンドウ側の表示言語とも連動する。言語名はそれぞれの言語自身の表記で固定、現在の言語側はアクセント色でハイライトする。
+- パッケージングは再発防止手順どおり、ビルド成果物（bin/Release）の3ファイルをそのまま zip 化し、公開前に zip 内マニフェストの InternalName / AssemblyVersion（1.22.1.0）を確認した。
+
+## v1.22.2 の修正（2026-11-22、設定ダウンリンクの適用フロー改善）
+
+- 背景: 設定ダウンリンクで DailyRoutines（モジュール355件）の設定を差し替えた際、結果が `applied-unverified` となり、ゲーム内では旧設定のまま動作し続けた（2026-11-22 実績で2回）。原因は適用フローの待ち時間: `/xldisableplugin` の発行後、固定3秒でファイル書き換えに進んでいたため、大規模プラグインではアンロード（破棄時の設定保存を含む）が終わる前に書き換えが走り、プラグイン側の保存が後から着地してファイルを旧内容へ戻していた。
+- 変更（ConfigSync.cs のみ）: 無効化の発行後は固定タイマーで進めず、対象プラグインが実際にアンロードされたことを約1秒間隔でポーリングして確認してから書き換える。60秒以内にアンロードされなければ、ファイルを一切変更せず `failed`（詳細にその旨を明記）で終了する。アンロード確認後は、破棄時の保存が着地しきるのを待つ2秒の猶予を置いてから書き換える（バックアップ＋一時ファイル経由の差し替えと書き換え内容の検証は従来どおり）。
+- 再有効化後の読み込み待ちも12秒から90秒へ延長した（大規模プラグインは読み込みに時間がかかるため）。読み込み確認後の再読み込み検証（内容一致またはJSONとして等価なら `applied`、相違なら `applied-unverified`、時間内に読み込まれなければ読み込み待ちタイムアウトの `applied-unverified`）は従来どおり。
+- その他の挙動は不変: 期待ハッシュのガード、バックアップ、未読み込みプラグインへの `applied-pending-load`、自プラグイン対象の拒否、結果記録と受信フォルダの処理。設定項目（27トグル）にも変更なし。
+- パッケージングは再発防止手順どおり、ビルド成果物（bin/Release）の3ファイルをそのまま zip 化し、公開前に zip 内マニフェストの InternalName / AssemblyVersion（1.22.2.0）を確認した。
+
+## v1.22.3 の変更（2026-11-23、バディ最大経験値を BuddyRank シートから取得）
+
+- 背景: バディ（チョコボ）の最大経験値（MaxExp）は、バディ画面の数値配列（BuddyNumberArray）から読んでいたため、そのキャラのクライアントでバディ画面を開いたことがないと取得できず、サイドカーファイル（mstatus-buddy-*.json）の前回値で補っていた。ランクアップ直後には前ランクの値が混ざる問題もあった（実例: Latte がランク14になった直後の書き出しで MaxExp がランク13の値のまま）。
+- 変更（Plugin.cs の BuildBuddy）: MaxExp をゲームデータの BuddyRank シート（現在のランクの行の ExpRequired）から取得するようにした。HaselTweaks の EnhancedExpBar と同じ方式。BuddyNumberArray の読み取りとサイドカーへの保存・読み込み（SaveBuddyMaxExp / LoadBuddyMaxExp / BuddyFile）は廃止した。
+- BuddyRank の値はランクごとの固定値（ランク7 = 700,000、ランク13 = 2,217,000、ランク14 = 2,463,000 など。ランク20の行は 0 で、その場合は MaxExp なしとして扱う）。ゲームデータから直接読むため、将来パッチで経験値カーブが変わっても自動で追随する。
+- 効果: バディ画面を開いていないキャラでも MaxExp と LevelUpReady が常に正しく書き出される。スナップショット形式と設定項目（27トグル）は不変。
+- パッケージングは再発防止手順どおり、ビルド成果物（bin/Release）の3ファイルをそのまま zip 化し、公開前に zip 内マニフェストの InternalName / AssemblyVersion（1.22.3.0）を確認した。ビルドは0警告・0エラー。
+
+## v1.23.0 の変更（2026-11-23、バディ満タン時のサベネアの野菜自動使用）
+
+- 背景: サベネアの野菜は厩舎でなくても、バディをフィールドで呼び出した状態でカバンから使用できる（FFXIV Community Wiki の Thavnairian Onion ページ現行版で確認。当初「厩舎必須」と誤認していた件は訂正済み）。ユーザーの依頼で、満タン時に自動で使う機能を追加した。
+- 変更（Plugin.cs / Configuration.cs / ConfigWindow.cs）: 新トグル `AutoUseThavnairianOnion`（初期設定はオフ、設定ウィンドウ「システム」カテゴリ。機能トグルは27→28）。条件をすべて満たす場合のみ、カバンのサベネアの野菜（アイテムID 8166）を `AgentInventoryContext.UseItem` で使用する。
+  - バディのランク10〜19、そのランクの経験値バー満タン（BuddyRank の ExpRequired で判定）
+  - そのランク分の上限解放が未実施（CompanionInfo.Stars == Rank - 10。上限が先行している状態ではゲーム側が使用を受け付けないため）
+  - バディがオブジェクトとしてそばに存在（BattleNpc・SubKind Buddy・OwnerId がプレイヤーと一致。都市・コンテンツ内など不在の場所では使わない）
+  - 戦闘中・カットシーン中・エリア移動中でない、PvPでない、カバン（Inventory1〜4）にオニオンがある
+- 使用後は☆（Stars）の増加を後続チェック（5秒間隔）で確認し、設定中のUI言語でチャット通知する。試行間隔60秒、未確認の試行がある間は再試行しない。プラグイン説明文にも日英で1文ずつ追記。スナップショット形式は不変。
+- パッケージングは再発防止手順どおり、ビルド成果物（bin/Release）の3ファイルをそのまま zip 化し、公開前に zip 内マニフェストの InternalName / AssemblyVersion（1.23.0.0）を確認した。ビルドは0警告・0エラー。
+- 未確認: 実機での動作（満タン時の自動使用、☆増加の確認チャット、不在時の不使用）は、次にランク10〜19のバディが満タンになったタイミングでの確認待ち。Stars の意味（上限解放回数、cap = 10 + Stars）は公式フォーラム事例と ClientStructs 構造定義からの判断で、実機での直接確認は未実施。
+
+## v1.23.1 の変更（2026-11-24、アイテム名の表記修正）
+
+- ユーザー指摘により、アイテムID 8166 の日本語名の誤記を修正した。正しくは「サベネアの野菜」（英語名 Thavnairian Onion は公式名称で変更なし）。
+- 修正箇所: 設定ウィンドウの項目名とツールチップ、自動使用後のチャット完了メッセージ、バディのレベルアップ可能通知（あわせて古い「厩舎で与える」案内を現行仕様に修正）、プラグイン説明文。
+- 機能変更なし。設定項目の内部名は互換性のため変更なし。ビルド0警告・0エラー。zip 内マニフェストの InternalName / AssemblyVersion（1.23.1.0）を確認済み。
+
+## v1.24.2 の変更（2026-11-24、サベネアの野菜の自動使用の判定を再修正）
+
+- 背景: v1.24.1 適用後も、Latte（ランク16）の経験値が満タンになった際に自動使用が発動しなかった。ところが今回は、野菜を使わないまま戦闘経験値でランク17に上がった。書き出しデータではランク17到達後も星は7のままで、野菜は消費されていない。
+- 原因: v1.24.1 で採用した「上限 = 9 + 星」という解釈自体が誤りだった（ランク16のバディ画面の星7つを「上限16まで引き上げ済み」と読み違えた）。星の数は限界突破の回数そのもので、上限は「10 + 星」。Latte はランク16時点で上限17まで引き上げ済みだったため、満タン後の戦闘経験値でそのままランクアップした（＝野菜が不要な状態で、v1.24.1 の式では逆に「使うべき」と誤判定していた）。加えて、満タンは戦闘中に訪れることが多いのに、戦闘中は使用を止める条件が残っていた（サベネアの野菜は戦闘中でも使用できる）。
+- 変更（Plugin.cs）: 判定式を「星の数 == ランク - 10」（ランクが上限に到達している場合のみ使用）に戻した。戦闘中の使用停止を外した（カットシーン中・エリア移動中は従来どおり停止）。コメントに、今回の実測（ランク17到達・星7のまま・野菜未消費）と仕様の根拠を記録した。
+- パッケージングは再発防止手順どおり、ビルド成果物（bin/Release）の3ファイルをそのまま zip 化し、公開前に zip 内マニフェストの InternalName / AssemblyVersion（1.24.2.0）を確認した。ビルドは0警告・0エラー。
+- 未確認: 修正後の自動使用の発動は、Latte のランク17（現在の上限）の経験値が満タンになった時点で初めて確認できる。
+
+## v1.24.1 の変更（2026-11-24、サベネアの野菜の自動使用が発動しない不具合の修正）
+
+- 背景: v1.23.0 で追加した「バディの経験値が満タンでランク上限を引き上げられる場合に、サベネアの野菜を自動使用する」機能が、実機（Ren Stella のバディ Latte、ランク15・経験値満タン）で発動せず、手動で使用することになった。設定はオン、バッグに野菜はあり、5秒ごとのチェック自体も動いていた。
+- 原因: 上限引き上げ済みかの判定式が間違っていた。バディ画面の実測では、ランク16（上限も16まで引き上げ済み）で星が7つ表示される。つまり上限は「9 + 星の数」であり、野菜を使える条件は「星の数 == ランク - 9」。従来の式（上限 = 10 + 星、条件「星 == ランク - 10」）では、満タンになっても条件を永遠に満たさなかった。
+- 変更（Plugin.cs）: 判定式を「星の数 == ランク - 9」に修正した（コメントにも実測の根拠を記載）。あわせて、バディの書き出し（Buddy セクション）に `Stars`（星の数）を追加し、今後は書き出しデータからも判定材料を確認できるようにした。
+- パッケージングは再発防止手順どおり、ビルド成果物（bin/Release）の3ファイルをそのまま zip 化し、公開前に zip 内マニフェストの InternalName / AssemblyVersion（1.24.1.0）を確認した。ビルドは0警告・0エラー。
+- 未確認: 修正後の自動使用の発動は、次の満タン時（Latte のランク17到達時）の実機確認待ち。インストール後の初回書き出しで、Latte の `Stars` が7と出れば星の数の解釈自体は確定する。
+
+## v1.24.0 の変更（2026-11-24、クラス・ジョブ・ロールクエストの完了状況を書き出し）
+
+- 背景: キャラクターごとに「どのレベルのクラスクエストまでクリアしたか」をレポートで把握したいというユーザーの依頼。あわせて、Ria の未クリアなクラスクエストを推定でなく実データで特定する必要があった。
+- 変更（Plugin.cs / Configuration.cs / ConfigWindow.cs）: 新トグル `ExportQuestProgress`（初期設定はオン、設定ウィンドウ「進行状況」カテゴリ。機能トグルは28→29）。スナップショットに `QuestProgress` セクションを追加した。
+  - 対象はジャーナルのセクション6「Class & Job Quests」に属する全クエスト（875件）: クラスクエスト（カテゴリ86〜89）、ジョブクエスト（93・94）、ロールクエスト（95）、ギャザクラのデリバリー系統（クリスタリウム・ミーン 90／スタディウム 91／ワチュメキメキ 92）。
+  - 分類はハードコードせず、Quest シートを走査して JournalGenre → JournalCategory → JournalSection が 6 のものを収集する（静的データのため初回のみ走査してキャッシュ）。
+  - 各クエストについて ID（RowId & 0xFFFF）・レベル（ClassJobLevel[0]）・完了フラグを書き出す。完了判定は `QuestManager.IsQuestComplete`（クライアント保持の完了ビット配列へのゲーム標準の判定）。
+  - ジャンル（クエスト系統）ごとにまとめ、ジャンル名（クライアント言語）とカテゴリIDも併記する。
+- プラグイン説明文にも日英で追記した。レポート画面への表示は今回なし（Muse 側のステータスレポートで「Lv○○までクリア」を表示する）。
+- パッケージングは再発防止手順どおり、ビルド成果物（bin/Release）の3ファイルをそのまま zip 化し、公開前に zip 内マニフェストの InternalName / AssemblyVersion（1.24.0.0）を確認した。ビルドは0警告・0エラー。
+- 未確認: 実機での書き出し内容（QuestProgress セクションの有無と完了フラグの正しさ）は、インストール後の初回書き出しでの確認待ち。
