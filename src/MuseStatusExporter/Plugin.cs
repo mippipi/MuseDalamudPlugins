@@ -495,10 +495,14 @@ public sealed class Plugin : IDalamudPlugin
     // Rank - 10 and dropped the InCombat suppression — the onion is
     // usable in combat — but kept a full-bar requirement, which can
     // never hold at the cap; v1.24.3 accepts the blocked 0-EXP state
-    // as well, verified the same day at rank 17, 0 / 3,174,000 EXP.)
+    // as well, verified the same day at rank 17, 0 / 3,174,000 EXP.
+    // v1.24.4: the retry interval is 15 seconds (was 60 — the first
+    // verified firing took 3 minutes because attempts made while
+    // moving kept being rejected), and attempts are skipped while
+    // jumping, which the game always refuses.)
     private const uint ThavnairianOnionItemId = 8166;
     private static readonly TimeSpan OnionCheckInterval = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan OnionAttemptInterval = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan OnionAttemptInterval = TimeSpan.FromSeconds(15);
     private DateTime lastOnionCheckUtc = DateTime.MinValue;
     private DateTime lastOnionAttemptUtc = DateTime.MinValue;
     private int onionUsePendingStars = -1;
@@ -1089,11 +1093,13 @@ public sealed class Plugin : IDalamudPlugin
 
             // No InCombat suppression: the onion is usable in combat
             // (feeding items are not blocked by combat), and a full bar
-            // at the cap typically fills mid-fight. Cutscenes and zoning
-            // still suppress the use, where it could not go through.
+            // at the cap typically fills mid-fight. Cutscenes, zoning and
+            // jumping still suppress the use, where it could not go
+            // through (a use attempted mid-jump is refused by the game).
             if (Condition[ConditionFlag.WatchingCutscene]
                 || Condition[ConditionFlag.OccupiedInCutSceneEvent]
-                || Condition[ConditionFlag.BetweenAreas])
+                || Condition[ConditionFlag.BetweenAreas]
+                || Condition[ConditionFlag.Jumping])
                 return;
 
             // The buddy must be physically present: an onion used while
