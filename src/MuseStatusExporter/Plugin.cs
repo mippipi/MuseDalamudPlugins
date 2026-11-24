@@ -483,13 +483,19 @@ public sealed class Plugin : IDalamudPlugin
     // bar (rank 10-19). CompanionInfo.Stars is the number of limit
     // breaks performed, so the cap is 10 + Stars, and a feed is only
     // needed (and only has an effect) once the rank has caught up with
-    // the cap: the gate below requires Stars == Rank - 10 as well as a
-    // full bar. Below the cap a full bar ranks up on the next combat
-    // EXP gain with no onion involved. (History: v1.24.1 changed the
-    // gate to Rank - 9 on a misread screenshot; on 2026-11-24 the buddy
-    // reached rank 17 with Stars still 7 and no onion used, proving the
-    // cap had been 17 at rank 16. v1.24.2 restores Rank - 10 and also
-    // drops the InCombat suppression: the onion is usable in combat.)
+    // the cap: the gate below requires Stars == Rank - 10. Below the
+    // cap a full bar ranks up on the next combat EXP gain with no
+    // onion involved. At the cap, EXP gains stop entirely: the buddy
+    // sits at 0 EXP with an orange rank number until the cap is
+    // raised, so the feed state is "EXP can no longer be gained" —
+    // a full bar OR an empty (blocked) one. (History: v1.24.1 changed
+    // the gate to Rank - 9 on a misread screenshot; on 2026-11-24 the
+    // buddy reached rank 17 with Stars still 7 and no onion used,
+    // proving the cap had been 17 at rank 16. v1.24.2 restored
+    // Rank - 10 and dropped the InCombat suppression — the onion is
+    // usable in combat — but kept a full-bar requirement, which can
+    // never hold at the cap; v1.24.3 accepts the blocked 0-EXP state
+    // as well, verified the same day at rank 17, 0 / 3,174,000 EXP.)
     private const uint ThavnairianOnionItemId = 8166;
     private static readonly TimeSpan OnionCheckInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan OnionAttemptInterval = TimeSpan.FromSeconds(60);
@@ -995,11 +1001,12 @@ public sealed class Plugin : IDalamudPlugin
 
     /// <summary>
     /// Uses a Thavnairian Onion from the bags when the buddy (chocobo
-    /// companion) can gain a rank-cap raise: rank 10-19, the current rank's
-    /// EXP bar full, and the rank has caught up with its cap
-    /// (CompanionInfo.Stars == Rank - 10; below the cap a full bar ranks
-    /// up on the next combat EXP gain and an onion would have no effect).
-    /// The onion only
+    /// companion) can gain a rank-cap raise: rank 10-19, the rank has
+    /// caught up with its cap (CompanionInfo.Stars == Rank - 10; below
+    /// the cap a full bar ranks up on the next combat EXP gain and an
+    /// onion would have no effect), and EXP can no longer be gained —
+    /// a full bar, or the empty blocked bar (0 EXP, orange rank number)
+    /// the buddy sits at once it reaches its cap. The onion only
     /// takes effect while the buddy is physically summoned next to the
     /// player in the field — using it anywhere else wastes it — so the
     /// buddy's presence in the object table is required, on top of the
@@ -1069,7 +1076,15 @@ public sealed class Plugin : IDalamudPlugin
                 buddyRankSheet.TryGetRow((uint)rank, out var buddyRank) &&
                 buddyRank.ExpRequired > 0)
                 maxExp = (int)buddyRank.ExpRequired;
-            if (maxExp == null || (int)info.CurrentXP < maxExp.Value)
+            if (maxExp == null)
+                return;
+
+            // The feed state is "EXP can no longer be gained": a full
+            // bar, or an empty one. At the cap the bar is empty —
+            // ranking up to the cap resets EXP to 0 and blocks further
+            // gains (orange rank number) until the cap is raised, so
+            // requiring a full bar alone would never fire there.
+            if ((int)info.CurrentXP != 0 && (int)info.CurrentXP < maxExp.Value)
                 return;
 
             // No InCombat suppression: the onion is usable in combat
