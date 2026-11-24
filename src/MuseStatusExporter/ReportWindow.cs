@@ -320,6 +320,7 @@ public sealed class ReportWindow : Window
             (L("バディ", "Buddy"), BuildBuddyLines(snapshot)),
             (L("週間トームストーン", "Weekly Tomestones"), BuildWeeklyTomestoneLines(snapshot)),
             (L("リテイナー", "Retainers"), BuildRetainerLines(snapshot)),
+            (L("冒険者小隊", "Adventurer Squadron"), BuildSquadronLines(snapshot)),
             (L("クレセントアイル", "Occult Crescent"), BuildOccultLines(snapshot)),
         };
     }
@@ -529,6 +530,39 @@ public sealed class ReportWindow : Window
             L($"{weekly.Acquired} / {weekly.Limit}（残り {remaining}）",
                 $"{weekly.Acquired} / {weekly.Limit} ({remaining} remaining)"),
         };
+    }
+
+    private List<string> BuildSquadronLines(Plugin.Snapshot snapshot)
+    {
+        if (snapshot.Squadron == null)
+            return NoData();
+        var squadron = snapshot.Squadron;
+        var lines = new List<string>();
+        if (squadron.ExpeditionId == 0)
+            lines.Add(L("任務なし", "No mission in progress"));
+        else
+        {
+            var name = squadron.ExpeditionName ?? $"#{squadron.ExpeditionId}";
+            if (squadron.MissionCompleted)
+                lines.Add(L($"任務完了（受け取り待ち）: {name}",
+                    $"Mission complete (awaiting debrief): {name}"));
+            else if (squadron.MissionCompleteAt != null &&
+                     DateTimeOffset.TryParse(squadron.MissionCompleteAt, out var completeAt))
+                lines.Add(L($"任務中: {name}（完了 {completeAt:M/d HH:mm}）",
+                    $"On mission: {name} (completes {completeAt:M/d HH:mm})"));
+            else
+                lines.Add(L($"任務中: {name}", $"On mission: {name}"));
+        }
+        if (squadron.TrainingId != 0)
+        {
+            var name = squadron.TrainingName ?? $"#{squadron.TrainingId}";
+            lines.Add(squadron.TrainingCompleted
+                ? L($"訓練完了: {name}", $"Training complete: {name}")
+                : L($"訓練中: {name}", $"Training in progress: {name}"));
+        }
+        if (squadron.HasNewCandidate)
+            lines.Add(L("新しい入隊希望者がいます", "A new recruit candidate is waiting"));
+        return lines;
     }
 
     private List<string> BuildRetainerLines(Plugin.Snapshot snapshot)

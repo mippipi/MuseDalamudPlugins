@@ -331,6 +331,20 @@ Muse からプラグイン設定を変更できるようにする機能です。
 - 修正箇所: 設定ウィンドウの項目名とツールチップ、自動使用後のチャット完了メッセージ、バディのレベルアップ可能通知（あわせて古い「厩舎で与える」案内を現行仕様に修正）、プラグイン説明文。
 - 機能変更なし。設定項目の内部名は互換性のため変更なし。ビルド0警告・0エラー。zip 内マニフェストの InternalName / AssemblyVersion（1.23.1.0）を確認済み。
 
+## v1.25.0 の追加（2026-11-25、冒険者小隊の状態の書き出し）
+
+- 追加内容:
+  - ステータスJSONに `Squadron` セクションを追加。冒険者小隊の任務（遠征）と訓練の状態を書き出す: 任務ID（GcArmyExpedition の RowId）と任務名（クライアント言語）、任務の完了予定時刻 `MissionCompleteAt`、完了して受け取り待ちかどうか `MissionCompleted`、訓練ID・訓練名・完了予定時刻・完了可否、新しい入隊希望者の有無。
+  - 読み取り元は PlayerState の常駐フィールド（タイマーウィンドウに表示されるのと同じ値）。兵舎に入らなくても常時取得できる。
+  - 判定: 任務が有効（任務IDが0でない）で、完了予定時刻を過ぎていれば「完了（受け取り待ち）」。任務の受け取り（報告）を済ませると任務IDが0に戻る。
+  - 設定ウィンドウ「GC・リテイナー」カテゴリにトグル「冒険者小隊」を追加（初期設定オン）。ゲーム内レポート画面（/mstatus report）にも「冒険者小隊」セクションを追加。
+  - 変化検出の対象に含めたため、任務の出発・完了のタイミングで書き出しが走る。
+- 検証:
+  - ビルド成功（警告 0 / エラー 0）。zip 内マニフェストの AssemblyVersion が 1.25.0.0 であること、InternalName が含まれることを確認。
+  - 未確認: 実機での値（任務中・完了後の書き出し内容）。次にログイン・任務が進んだ際に書き出しで確認される。
+
+English summary: v1.25.0 adds a `Squadron` section to the status JSON: the adventurer squadron's active mission (expedition id and name, scheduled completion time, and whether it has completed and awaits debrief) and training state, read from the resident PlayerState fields (the same values the Timers window shows), so no barracks visit is needed. A settings toggle (on by default) is added under "GC & Retainers", and the in-game report window gains an "Adventurer Squadron" section.
+
 ## v1.24.4 の変更（2026-11-24、サベネアの野菜の自動使用の再試行を短縮）
 
 - 変更点:

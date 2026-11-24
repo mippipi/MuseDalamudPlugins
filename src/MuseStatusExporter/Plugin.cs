@@ -2184,6 +2184,17 @@ public sealed class Plugin : IDalamudPlugin
             Log.Warning(ex, "Failed to read quest progress.");
         }
 
+        // ---- Adventurer squadron (v1.25.0) --------------------------------------
+        try
+        {
+            if (configuration.ExportSquadron)
+                snapshot.Squadron = BuildSquadron();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to read squadron state.");
+        }
+
         // ---- Chocobo companion (buddy) ------------------------------------------
         try
         {
@@ -2458,6 +2469,86 @@ public sealed class Plugin : IDalamudPlugin
             return null;
 
         return new WeeklyTomestoneData { Acquired = acquired, Limit = limit };
+    }
+
+    // ---- Adventurer squadron (v1.25.0) -------------------------------------
+
+    /// <summary>
+    /// Reads the adventurer squadron's state from the resident PlayerState
+    /// fields (the same values the Timers window shows): the active
+    /// expedition (GcArmyExpedition row id) and training (GcArmyTraining
+    /// row id), plus their scheduled completion timestamps. A mission or
+    /// training counts as completed when it is still active and its
+    /// completion time has passed (it then waits for the debrief at the
+    /// squadron sergeant). Returns null when the squadron has never been
+    /// touched (no expedition, no training, no timestamps).
+    /// </summary>
+    private unsafe SquadronData? BuildSquadron()
+    {
+        var playerState = PlayerState.Instance();
+        if (playerState == null)
+            return null;
+
+        var expeditionId = (int)playerState->ActiveGcArmyExpedition;
+        var trainingId = (int)playerState->ActiveGcArmyTraining;
+        var missionTimestamp = playerState->SquadronMissionCompletionTimestamp;
+        var trainingTimestamp = playerState->SquadronTrainingCompletionTimestamp;
+        if (expeditionId == 0 && trainingId == 0 &&
+            missionTimestamp == 0 && trainingTimestamp == 0)
+            return null;
+
+        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+
+        string? expeditionName = null;
+        if (expeditionId != 0)
+        {
+            try
+            {
+                var sheet = DataManager.GetExcelSheet<GcArmyExpedition>();
+                if (sheet != null && sheet.TryGetRow((uint)expeditionId, out var row))
+                    expeditionName = row.Name.ExtractText();
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to resolve the squadron expedition name.");
+            }
+        }
+
+        string? trainingName = null;
+        if (trainingId != 0)
+        {
+            try
+            {
+                var sheet = DataManager.GetExcelSheet<GcArmyTraining>();
+                if (sheet != null && sheet.TryGetRow((uint)trainingId, out var row))
+                    trainingName = row.Name.ExtractText();
+            }
+            catch (Exception ex)
+            {
+                Log.Warning(ex, "Failed to resolve the squadron training name.");
+            }
+        }
+
+        return new SquadronData
+        {
+            ExpeditionId = expeditionId,
+            ExpeditionName = expeditionName,
+            MissionCompleteAt = expeditionId != 0 && missionTimestamp > 0
+                ? DateTimeOffset.FromUnixTimeSeconds(missionTimestamp)
+                    .ToLocalTime().ToString("o")
+                : null,
+            MissionCompleted = expeditionId != 0 && missionTimestamp > 0 &&
+                               missionTimestamp <= now,
+            TrainingId = trainingId,
+            TrainingName = trainingName,
+            TrainingCompleteAt = trainingId != 0 && trainingTimestamp > 0
+                ? DateTimeOffset.FromUnixTimeSeconds(trainingTimestamp)
+                    .ToLocalTime().ToString("o")
+                : null,
+            TrainingCompleted = trainingId != 0 && trainingTimestamp > 0 &&
+                                trainingTimestamp <= now,
+            HasNewCandidate = playerState->HasNewGcArmyCandidate,
+        };
     }
 
     // ---- Roulette completion (v1.14.0) ------------------------------------
@@ -4488,6 +4579,7 @@ public sealed class Plugin : IDalamudPlugin
         public List<RetainerMarketData> RetainerMarket => Snapshot.RetainerMarket;
         public FreeCompanyData? FreeCompany => Snapshot.FreeCompany;
         public OccultCrescentData? OccultCrescent => Snapshot.OccultCrescent;
+        public SquadronData? Squadron => Snapshot.Squadron;
 
         // PlayTime and GcAgentProbe are deliberately NOT part of the
         // payload: both change on every read (session seconds grow, the
@@ -4529,6 +4621,7 @@ public sealed class Plugin : IDalamudPlugin
         public List<RetainerMarketData> RetainerMarket { get; set; } = [];
         public FreeCompanyData? FreeCompany { get; set; }
         public OccultCrescentData? OccultCrescent { get; set; }
+        public SquadronData? Squadron { get; set; }
     }
 
     public sealed class FreeCompanyData
@@ -4709,6 +4802,36 @@ public sealed class Plugin : IDalamudPlugin
     {
         public int Acquired { get; set; }
         public int Limit { get; set; }
+    }
+
+    public sealed class SquadronData
+    {
+        /// <summary>Active expedition (squadron mission) row id in the GcArmyExpedition sheet; 0 = no mission dispatched.</summary>
+        public int ExpeditionId { get; set; }
+
+        /// <summary>Expedition name in the game client's language; null when it cannot be resolved.</summary>
+        public string? ExpeditionName { get; set; }
+
+        /// <summary>Scheduled mission completion time (local, ISO 8601); null when no mission is dispatched.</summary>
+        public string? MissionCompleteAt { get; set; }
+
+        /// <summary>True when the mission's completion time has passed and it awaits the debrief.</summary>
+        public bool MissionCompleted { get; set; }
+
+        /// <summary>Active training row id in the GcArmyTraining sheet; 0 = no training in progress.</summary>
+        public int TrainingId { get; set; }
+
+        /// <summary>Training name in the game client's language; null when it cannot be resolved.</summary>
+        public string? TrainingName { get; set; }
+
+        /// <summary>Scheduled training completion time (local, ISO 8601); null when no training is in progress.</summary>
+        public string? TrainingCompleteAt { get; set; }
+
+        /// <summary>True when the training's completion time has passed.</summary>
+        public bool TrainingCompleted { get; set; }
+
+        /// <summary>True when a new squadron recruit candidate is waiting.</summary>
+        public bool HasNewCandidate { get; set; }
     }
 
     public sealed class RouletteCompletionData

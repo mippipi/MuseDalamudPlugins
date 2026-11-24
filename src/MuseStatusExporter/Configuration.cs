@@ -56,6 +56,9 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Include class, job and role quest completion (and crafter/gatherer deliveries) in the snapshot.</summary>
     public bool ExportQuestProgress { get; set; } = true;
 
+    /// <summary>Include the adventurer squadron's mission and training state (active expedition/training and their completion times) in the snapshot.</summary>
+    public bool ExportSquadron { get; set; } = true;
+
     /// <summary>Include chocobo companion (buddy) rank and EXP in the snapshot.</summary>
     public bool ExportBuddy { get; set; } = true;
 

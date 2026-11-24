@@ -390,6 +390,10 @@ public sealed class ConfigWindow : Window
                 {
                     Item("CaptureGcSupply", "GC軍需品リストの取得", "Capture GC Supply List", null, null,
                         () => configuration.CaptureGcSupply, v => configuration.CaptureGcSupply = v),
+                    Item("ExportSquadron", "冒険者小隊", "Adventurer Squadron",
+                        "小隊任務と訓練の状態（完了時刻と、完了して受け取り待ちかどうか）を記録します",
+                        "Records the squadron's mission and training state (completion times and whether they have completed and await debrief).",
+                        () => configuration.ExportSquadron, v => configuration.ExportSquadron = v),
                     Item("ProbeGcAgent", "GCエージェントの状態（実験）", "GC Agent State (Experimental)", null, null,
                         () => configuration.ProbeGcAgent, v => configuration.ProbeGcAgent = v),
                     Item("ExportRetainerMarket", "リテイナーの出品リスト", "Retainer Market Listings", null, null,
