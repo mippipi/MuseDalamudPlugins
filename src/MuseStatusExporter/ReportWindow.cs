@@ -639,7 +639,7 @@ public sealed class ReportWindow : Window
         };
         foreach (var group in books.GroupBy(b => b.ClassJobId).OrderBy(g => g.Key))
         {
-            var groupBooks = group.OrderBy(b => b.Division).ToList();
+            var groupBooks = group.OrderBy(b => b.QuestIndex).ToList();
             var groupUnlocked = groupBooks.Count(b => b.Unlocked);
             lines.Add($"{groupBooks[0].Job}: {groupUnlocked} / {groupBooks.Count}");
             for (var i = 0; i < groupBooks.Count; i += 2)

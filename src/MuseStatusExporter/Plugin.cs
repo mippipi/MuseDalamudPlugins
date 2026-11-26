@@ -2294,17 +2294,6 @@ public sealed class Plugin : IDalamudPlugin
             Log.Warning(ex, "Failed to read folklore tome unlock state.");
         }
 
-        // ---- Folklore diagnostics (v1.26.1) ---------------------------------------
-        try
-        {
-            if (configuration.ExportFolklore)
-                snapshot.FolkloreDebug = BuildFolkloreDebug();
-        }
-        catch (Exception ex)
-        {
-            Log.Warning(ex, "Failed to read folklore tome diagnostics.");
-        }
-
         return snapshot;
     }
 
@@ -2573,25 +2562,30 @@ public sealed class Plugin : IDalamudPlugin
         };
     }
 
-    // ---- Folklore tomes (v1.26.0) ------------------------------------------
+    // ---- Folklore tomes (v1.26.0, unlock check fixed in v1.26.2) ------------
 
     /// <summary>
     /// Folklore tome unlock state for every book in the
     /// GatheringSubCategory sheet: the rows that carry a tome item,
-    /// deduped by (ClassJob, Division) and ordered by ClassJob, then
-    /// Division (31 books with the current game data: 12 Miner,
-    /// 12 Botanist, 7 Fisher). The book list is derived from game
-    /// data, so books added by future expansions are picked up
-    /// automatically. The unlock flag is the game's own
-    /// PlayerState.IsFolkloreBookUnlocked, the same check the
-    /// gathering log uses to reveal legendary nodes. Every book is
-    /// exported with the raw API result, including the Fisher
-    /// Vrandtic book, whose Division is 0.
-    /// NOTE (v1.26.1): passing Division proved wrong on a real
-    /// machine — a character whose gathering log shows the Dawntrail
-    /// Miner tomes as unlocked reported every book as locked — so
-    /// these flags are known-bad until the correct reading is
-    /// identified from the diagnostics in BuildFolkloreDebug.
+    /// keyed by (ClassJob, Quest index) — the sheet's Quest column
+    /// holds each book's sequential index within its job (0-11) —
+    /// and ordered by ClassJob, then Quest index (36 books with the
+    /// current game data: 12 per job; the six pre-Dawntrail Fisher
+    /// tomes share Division 0 but are separate books). The book list
+    /// is derived from game data, so books added by future expansions
+    /// are picked up automatically.
+    /// The unlock flag is read from the raw PlayerState folklore
+    /// bitfields (FFXIVClientStructs PlayerState offsets 0x612 Miner /
+    /// 0x614 Botanist / 0x616 Fisher, one ushort per job): the bit at
+    /// the book's Quest index is its unlock state. This reading was
+    /// confirmed against a real-machine sample in v1.26.1's
+    /// diagnostics: for a character whose gathering log shows the
+    /// Dawntrail Miner tomes (Divisions 2015/2016/2017, Quest indexes
+    /// 9/10/11) as unlocked, the Miner bitfield was 3584 (bits 9-11).
+    /// PlayerState.IsFolkloreBookUnlocked is deliberately not used:
+    /// passing the Division (v1.26.0) reported every book as locked
+    /// for that character, and passing the tome ItemId or the Quest
+    /// index reported every book as unlocked.
     /// </summary>
     private unsafe List<FolkloreTomeEntry>? BuildFolklore()
     {
@@ -2605,82 +2599,13 @@ public sealed class Plugin : IDalamudPlugin
 
         var classJobSheet = DataManager.GetExcelSheet<ClassJob>();
 
-        var seen = new HashSet<(uint ClassJobId, int Division)>();
-        var books = new List<FolkloreTomeEntry>();
-        foreach (var row in sheet)
-        {
-            var itemId = row.Item.RowId;
-            if (itemId == 0)
-                continue;
-
-            var classJobId = row.ClassJob.RowId;
-            var division = (int)row.Division;
-            if (!seen.Add((classJobId, division)))
-                continue;
-
-            string? jobName = null;
-            if (classJobSheet != null && classJobId != 0 &&
-                classJobSheet.TryGetRow(classJobId, out var classJobRow))
-                jobName = classJobRow.Name.ExtractText();
-
-            books.Add(new FolkloreTomeEntry
-            {
-                Job = jobName ?? $"ClassJob {classJobId}",
-                ClassJobId = (int)classJobId,
-                Division = division,
-                Name = row.FolkloreBook.ExtractText(),
-                ItemId = itemId,
-                Unlocked = playerState->IsFolkloreBookUnlocked((uint)division),
-            });
-        }
-
-        if (books.Count == 0)
-            return null;
-
-        books.Sort((a, b) => a.ClassJobId != b.ClassJobId
-            ? a.ClassJobId.CompareTo(b.ClassJobId)
-            : a.Division.CompareTo(b.Division));
-        return books;
-    }
-
-    /// <summary>
-    /// Diagnostic data for the folklore unlock check (v1.26.1). The
-    /// Division-based IsFolkloreBookUnlocked results exported by
-    /// BuildFolklore proved wrong on a real machine (a character with
-    /// the Dawntrail Miner tomes unlocked — Divisions 2015/2016/2017,
-    /// confirmed in the gathering log — reported every book as
-    /// locked), so this block exports the raw evidence needed to pin
-    /// down the correct read: the three PlayerState folklore
-    /// bitfields (FFXIVClientStructs PlayerState offsets 0x612 Miner /
-    /// 0x614 Botanist / 0x616 Fisher, read as raw ushorts) and, for
-    /// every book, the result of IsFolkloreBookUnlocked under each
-    /// candidate argument (Division, GatheringSubCategory RowId, tome
-    /// ItemId, and the sheet's Quest index — the book's sequential
-    /// index within its job), plus the state of the bit at the book's
-    /// Quest index in its job's bitfield. Books here are keyed by
-    /// (ClassJob, Quest index), which keeps the six pre-Dawntrail
-    /// Fisher tomes (all Division 0) as separate entries: 36 books in
-    /// total with the current game data. The correct scheme is the
-    /// one that reports the Dawntrail Miner books as unlocked for a
-    /// character known to have them.
-    /// </summary>
-    private unsafe FolkloreDebugData? BuildFolkloreDebug()
-    {
-        var playerState = PlayerState.Instance();
-        if (playerState == null)
-            return null;
-
-        var sheet = DataManager.GetExcelSheet<GatheringSubCategory>();
-        if (sheet == null)
-            return null;
-
         var statePtr = (byte*)playerState;
         var minerBits = *(ushort*)(statePtr + 0x612);
         var botanistBits = *(ushort*)(statePtr + 0x614);
         var fisherBits = *(ushort*)(statePtr + 0x616);
 
         var seen = new HashSet<(uint ClassJobId, uint QuestIndex)>();
-        var books = new List<FolkloreDebugEntry>();
+        var books = new List<FolkloreTomeEntry>();
         foreach (var row in sheet)
         {
             var itemId = row.Item.RowId;
@@ -2700,19 +2625,20 @@ public sealed class Plugin : IDalamudPlugin
                 _ => (ushort)0,
             };
 
-            books.Add(new FolkloreDebugEntry
+            string? jobName = null;
+            if (classJobSheet != null && classJobId != 0 &&
+                classJobSheet.TryGetRow(classJobId, out var classJobRow))
+                jobName = classJobRow.Name.ExtractText();
+
+            books.Add(new FolkloreTomeEntry
             {
+                Job = jobName ?? $"ClassJob {classJobId}",
                 ClassJobId = (int)classJobId,
-                Division = row.Division,
-                RowId = (int)row.RowId,
-                ItemId = itemId,
+                Division = (int)row.Division,
                 QuestIndex = (int)questIndex,
                 Name = row.FolkloreBook.ExtractText(),
-                ApiByDivision = playerState->IsFolkloreBookUnlocked(row.Division),
-                ApiByRowId = playerState->IsFolkloreBookUnlocked(row.RowId),
-                ApiByItemId = playerState->IsFolkloreBookUnlocked(itemId),
-                ApiByQuestIndex = playerState->IsFolkloreBookUnlocked(questIndex),
-                BitByQuestIndex = questIndex < 16 && (bits & (1 << (int)questIndex)) != 0,
+                ItemId = itemId,
+                Unlocked = questIndex < 16 && (bits & (1 << (int)questIndex)) != 0,
             });
         }
 
@@ -2722,13 +2648,7 @@ public sealed class Plugin : IDalamudPlugin
         books.Sort((a, b) => a.ClassJobId != b.ClassJobId
             ? a.ClassJobId.CompareTo(b.ClassJobId)
             : a.QuestIndex.CompareTo(b.QuestIndex));
-        return new FolkloreDebugData
-        {
-            MinerBits = minerBits,
-            BotanistBits = botanistBits,
-            FisherBits = fisherBits,
-            Books = books,
-        };
+        return books;
     }
 
     // ---- Roulette completion (v1.14.0) ------------------------------------
@@ -4761,7 +4681,6 @@ public sealed class Plugin : IDalamudPlugin
         public OccultCrescentData? OccultCrescent => Snapshot.OccultCrescent;
         public SquadronData? Squadron => Snapshot.Squadron;
         public List<FolkloreTomeEntry>? Folklore => Snapshot.Folklore;
-        public FolkloreDebugData? FolkloreDebug => Snapshot.FolkloreDebug;
 
         // PlayTime and GcAgentProbe are deliberately NOT part of the
         // payload: both change on every read (session seconds grow, the
@@ -4805,7 +4724,6 @@ public sealed class Plugin : IDalamudPlugin
         public OccultCrescentData? OccultCrescent { get; set; }
         public SquadronData? Squadron { get; set; }
         public List<FolkloreTomeEntry>? Folklore { get; set; }
-        public FolkloreDebugData? FolkloreDebug { get; set; }
     }
 
     public sealed class FreeCompanyData
@@ -5026,8 +4944,11 @@ public sealed class Plugin : IDalamudPlugin
         /// <summary>ClassJob row id (16 = Miner, 17 = Botanist, 18 = Fisher).</summary>
         public int ClassJobId { get; set; }
 
-        /// <summary>GatheringSubCategory.Division value; the argument passed to PlayerState.IsFolkloreBookUnlocked.</summary>
+        /// <summary>GatheringSubCategory.Division value (the six pre-Dawntrail Fisher tomes all share 0).</summary>
         public int Division { get; set; }
+
+        /// <summary>The sheet's Quest column value: the book's sequential index within its job (0-11); also the bit position in the job's PlayerState folklore bitfield.</summary>
+        public int QuestIndex { get; set; }
 
         /// <summary>Book name (the GatheringSubCategory sheet's FolkloreBook text) in the game client's language.</summary>
         public string Name { get; set; } = string.Empty;
@@ -5037,64 +4958,6 @@ public sealed class Plugin : IDalamudPlugin
 
         /// <summary>True when the book has been read and its legendary nodes are revealed.</summary>
         public bool Unlocked { get; set; }
-    }
-
-    /// <summary>
-    /// Diagnostic folklore data (v1.26.1): the raw PlayerState
-    /// folklore bitfields and per-book candidate readings, exported
-    /// so the correct unlock check can be identified from a
-    /// real-machine sample whose true unlock state is known.
-    /// Temporary; removed once the check is settled.
-    /// </summary>
-    public sealed class FolkloreDebugData
-    {
-        /// <summary>Raw ushort at PlayerState+0x612 (Miner folklore bitfield).</summary>
-        public int MinerBits { get; set; }
-
-        /// <summary>Raw ushort at PlayerState+0x614 (Botanist folklore bitfield).</summary>
-        public int BotanistBits { get; set; }
-
-        /// <summary>Raw ushort at PlayerState+0x616 (Fisher folklore bitfield).</summary>
-        public int FisherBits { get; set; }
-
-        /// <summary>One entry per book, keyed by (ClassJob, Quest index): 36 with the current game data.</summary>
-        public List<FolkloreDebugEntry> Books { get; set; } = [];
-    }
-
-    public sealed class FolkloreDebugEntry
-    {
-        /// <summary>ClassJob row id (16 = Miner, 17 = Botanist, 18 = Fisher).</summary>
-        public int ClassJobId { get; set; }
-
-        /// <summary>GatheringSubCategory.Division value.</summary>
-        public int Division { get; set; }
-
-        /// <summary>First GatheringSubCategory row id for this book.</summary>
-        public int RowId { get; set; }
-
-        /// <summary>The folklore tome item's row id.</summary>
-        public uint ItemId { get; set; }
-
-        /// <summary>The sheet's Quest column value: the book's sequential index within its job (0-11).</summary>
-        public int QuestIndex { get; set; }
-
-        /// <summary>Book name (the GatheringSubCategory sheet's FolkloreBook text) in the game client's language.</summary>
-        public string Name { get; set; } = string.Empty;
-
-        /// <summary>IsFolkloreBookUnlocked(Division) — the v1.26.0 reading, known to be wrong.</summary>
-        public bool ApiByDivision { get; set; }
-
-        /// <summary>IsFolkloreBookUnlocked(GatheringSubCategory RowId).</summary>
-        public bool ApiByRowId { get; set; }
-
-        /// <summary>IsFolkloreBookUnlocked(tome ItemId).</summary>
-        public bool ApiByItemId { get; set; }
-
-        /// <summary>IsFolkloreBookUnlocked(Quest index).</summary>
-        public bool ApiByQuestIndex { get; set; }
-
-        /// <summary>Bit at position QuestIndex in the job's raw bitfield (PlayerState+0x612/0x614/0x616).</summary>
-        public bool BitByQuestIndex { get; set; }
     }
 
     public sealed class RouletteCompletionData
