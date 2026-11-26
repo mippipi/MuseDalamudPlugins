@@ -17,8 +17,8 @@ namespace MuseStatusExporter;
 /// list with owned / shortfall counts computed here, known houses'
 /// last entry and demolition dates, main scenario progress, shared
 /// FATE progress, the buddy, weekly tomestones, retainers (venture
-/// completion times and market listings) and Occult Crescent
-/// progress. Other characters are shown as tabs, read from their
+/// completion times and market listings), Occult Crescent
+/// progress and folklore tome unlock state. Other characters are shown as tabs, read from their
 /// saved ffxiv-status-*.json files in the plugin config folder (the
 /// same reading pattern as the cross-character login summary); the
 /// current character uses the live snapshot. The design follows the
@@ -322,6 +322,7 @@ public sealed class ReportWindow : Window
             (L("リテイナー", "Retainers"), BuildRetainerLines(snapshot)),
             (L("冒険者小隊", "Adventurer Squadron"), BuildSquadronLines(snapshot)),
             (L("クレセントアイル", "Occult Crescent"), BuildOccultLines(snapshot)),
+            (L("伝承録", "Folklore Tomes"), BuildFolkloreLines(snapshot)),
         };
     }
 
@@ -624,6 +625,39 @@ public sealed class ReportWindow : Window
         }
 
         return lines;
+    }
+
+    private List<string> BuildFolkloreLines(Plugin.Snapshot snapshot)
+    {
+        if (snapshot.Folklore == null || snapshot.Folklore.Count == 0)
+            return NoData();
+        var books = snapshot.Folklore;
+        var unlocked = books.Count(b => b.Unlocked);
+        var lines = new List<string>
+        {
+            L($"解放済み {unlocked} / {books.Count} 冊", $"{unlocked} / {books.Count} books unlocked"),
+        };
+        foreach (var group in books.GroupBy(b => b.ClassJobId).OrderBy(g => g.Key))
+        {
+            var groupBooks = group.OrderBy(b => b.Division).ToList();
+            var groupUnlocked = groupBooks.Count(b => b.Unlocked);
+            lines.Add($"{groupBooks[0].Job}: {groupUnlocked} / {groupBooks.Count}");
+            for (var i = 0; i < groupBooks.Count; i += 2)
+            {
+                var left = FormatFolkloreBook(groupBooks[i]);
+                var right = i + 1 < groupBooks.Count ? FormatFolkloreBook(groupBooks[i + 1]) : null;
+                lines.Add(right == null ? left : $"{left} / {right}");
+            }
+        }
+
+        return lines;
+    }
+
+    private string FormatFolkloreBook(Plugin.FolkloreTomeEntry book)
+    {
+        return book.Unlocked
+            ? book.Name
+            : L($"{book.Name}（未解放）", $"{book.Name} (locked)");
     }
 
     private string FormatSupportJob(Plugin.OccultSupportJobEntry job)

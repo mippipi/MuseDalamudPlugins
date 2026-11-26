@@ -2283,6 +2283,17 @@ public sealed class Plugin : IDalamudPlugin
             Log.Warning(ex, "Failed to read Occult Crescent progress.");
         }
 
+        // ---- Folklore tomes (v1.26.0) ---------------------------------------------
+        try
+        {
+            if (configuration.ExportFolklore)
+                snapshot.Folklore = BuildFolklore();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to read folklore tome unlock state.");
+        }
+
         return snapshot;
     }
 
@@ -2549,6 +2560,71 @@ public sealed class Plugin : IDalamudPlugin
                                 trainingTimestamp <= now,
             HasNewCandidate = playerState->HasNewGcArmyCandidate,
         };
+    }
+
+    // ---- Folklore tomes (v1.26.0) ------------------------------------------
+
+    /// <summary>
+    /// Folklore tome unlock state for every book in the
+    /// GatheringSubCategory sheet: the rows that carry a tome item,
+    /// deduped by (ClassJob, Division) and ordered by ClassJob, then
+    /// Division (31 books with the current game data: 12 Miner,
+    /// 12 Botanist, 7 Fisher). The book list is derived from game
+    /// data, so books added by future expansions are picked up
+    /// automatically. The unlock flag is the game's own
+    /// PlayerState.IsFolkloreBookUnlocked, the same check the
+    /// gathering log uses to reveal legendary nodes. Every book is
+    /// exported with the raw API result, including the Fisher
+    /// Vrandtic book, whose Division is 0.
+    /// </summary>
+    private unsafe List<FolkloreTomeEntry>? BuildFolklore()
+    {
+        var playerState = PlayerState.Instance();
+        if (playerState == null)
+            return null;
+
+        var sheet = DataManager.GetExcelSheet<GatheringSubCategory>();
+        if (sheet == null)
+            return null;
+
+        var classJobSheet = DataManager.GetExcelSheet<ClassJob>();
+
+        var seen = new HashSet<(uint ClassJobId, int Division)>();
+        var books = new List<FolkloreTomeEntry>();
+        foreach (var row in sheet)
+        {
+            var itemId = row.Item.RowId;
+            if (itemId == 0)
+                continue;
+
+            var classJobId = row.ClassJob.RowId;
+            var division = (int)row.Division;
+            if (!seen.Add((classJobId, division)))
+                continue;
+
+            string? jobName = null;
+            if (classJobSheet != null && classJobId != 0 &&
+                classJobSheet.TryGetRow(classJobId, out var classJobRow))
+                jobName = classJobRow.Name.ExtractText();
+
+            books.Add(new FolkloreTomeEntry
+            {
+                Job = jobName ?? $"ClassJob {classJobId}",
+                ClassJobId = (int)classJobId,
+                Division = division,
+                Name = row.FolkloreBook.ExtractText(),
+                ItemId = itemId,
+                Unlocked = playerState->IsFolkloreBookUnlocked((uint)division),
+            });
+        }
+
+        if (books.Count == 0)
+            return null;
+
+        books.Sort((a, b) => a.ClassJobId != b.ClassJobId
+            ? a.ClassJobId.CompareTo(b.ClassJobId)
+            : a.Division.CompareTo(b.Division));
+        return books;
     }
 
     // ---- Roulette completion (v1.14.0) ------------------------------------
@@ -4580,6 +4656,7 @@ public sealed class Plugin : IDalamudPlugin
         public FreeCompanyData? FreeCompany => Snapshot.FreeCompany;
         public OccultCrescentData? OccultCrescent => Snapshot.OccultCrescent;
         public SquadronData? Squadron => Snapshot.Squadron;
+        public List<FolkloreTomeEntry>? Folklore => Snapshot.Folklore;
 
         // PlayTime and GcAgentProbe are deliberately NOT part of the
         // payload: both change on every read (session seconds grow, the
@@ -4622,6 +4699,7 @@ public sealed class Plugin : IDalamudPlugin
         public FreeCompanyData? FreeCompany { get; set; }
         public OccultCrescentData? OccultCrescent { get; set; }
         public SquadronData? Squadron { get; set; }
+        public List<FolkloreTomeEntry>? Folklore { get; set; }
     }
 
     public sealed class FreeCompanyData
@@ -4832,6 +4910,27 @@ public sealed class Plugin : IDalamudPlugin
 
         /// <summary>True when a new squadron recruit candidate is waiting.</summary>
         public bool HasNewCandidate { get; set; }
+    }
+
+    public sealed class FolkloreTomeEntry
+    {
+        /// <summary>Class/job name in the game client's language (e.g. 採掘師).</summary>
+        public string Job { get; set; } = string.Empty;
+
+        /// <summary>ClassJob row id (16 = Miner, 17 = Botanist, 18 = Fisher).</summary>
+        public int ClassJobId { get; set; }
+
+        /// <summary>GatheringSubCategory.Division value; the argument passed to PlayerState.IsFolkloreBookUnlocked.</summary>
+        public int Division { get; set; }
+
+        /// <summary>Book name (the GatheringSubCategory sheet's FolkloreBook text) in the game client's language.</summary>
+        public string Name { get; set; } = string.Empty;
+
+        /// <summary>The folklore tome item's row id.</summary>
+        public uint ItemId { get; set; }
+
+        /// <summary>True when the book has been read and its legendary nodes are revealed.</summary>
+        public bool Unlocked { get; set; }
     }
 
     public sealed class RouletteCompletionData

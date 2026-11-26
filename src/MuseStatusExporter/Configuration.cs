@@ -104,5 +104,8 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Include Occult Crescent progress (knowledge level, phantom job levels/EXP, crescent currencies) in the snapshot (v1.20.0).</summary>
     public bool ExportOccultCrescent { get; set; } = true;
 
+    /// <summary>Include folklore tome unlock state (every book across Miner, Botanist and Fisher, with its unlocked flag) in the snapshot (v1.26.0).</summary>
+    public bool ExportFolklore { get; set; } = true;
+
     public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
 }
