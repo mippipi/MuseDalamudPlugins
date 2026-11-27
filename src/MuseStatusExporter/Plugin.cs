@@ -2294,6 +2294,61 @@ public sealed class Plugin : IDalamudPlugin
             Log.Warning(ex, "Failed to read folklore tome unlock state.");
         }
 
+        // ---- Scrips (v1.27.0) ---------------------------------------------------
+        try
+        {
+            if (configuration.ExportScrips)
+                snapshot.Scrips = BuildScrips();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to read scrip balances.");
+        }
+
+        // ---- Current location (v1.27.0) -----------------------------------------
+        try
+        {
+            if (configuration.ExportLocation)
+                snapshot.Location = BuildLocation();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to read current location.");
+        }
+
+        // ---- Master recipe books (v1.27.0) ---------------------------------------
+        try
+        {
+            if (configuration.ExportMasterBooks)
+                snapshot.MasterBooks = BuildMasterBooks();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to read master recipe book unlock state.");
+        }
+
+        // ---- Trust members (v1.27.0) ---------------------------------------------
+        try
+        {
+            if (configuration.ExportTrust)
+                snapshot.Trust = BuildTrust();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to read Trust member levels.");
+        }
+
+        // ---- Beastmaster (v1.27.0) -------------------------------------------------
+        try
+        {
+            if (configuration.ExportBeastmaster)
+                snapshot.Beastmaster = BuildBeastmaster();
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to read Beastmaster progress.");
+        }
+
         return snapshot;
     }
 
@@ -2649,6 +2704,208 @@ public sealed class Plugin : IDalamudPlugin
             ? a.ClassJobId.CompareTo(b.ClassJobId)
             : a.QuestIndex.CompareTo(b.QuestIndex));
         return books;
+    }
+
+    // ---- Scrips (v1.27.0) ------------------------------------------------
+
+    /// <summary>
+    /// Crafter/gatherer scrip balances. Scrips are real items
+    /// (white 25199/25200, purple 33913/33914, orange 41784/41785,
+    /// Skybuilders' 28063), not currency-container pseudo items like
+    /// gil or tomestones, so the BuildCurrencies container scan never
+    /// lists them; each one is counted individually with the game's
+    /// own per-container count function. Every known scrip is always
+    /// listed (including zero balances), so consumers can tell
+    /// "none held" apart from "not exported".
+    /// </summary>
+    private static readonly uint[] ScripItemIds = [25199, 25200, 33913, 33914, 41784, 41785, 28063];
+
+    private unsafe List<CurrencyEntry> BuildScrips()
+    {
+        var result = new List<CurrencyEntry>();
+        var inventory = InventoryManager.Instance();
+        if (inventory == null)
+            return result;
+
+        foreach (var itemId in ScripItemIds)
+        {
+            result.Add(new CurrencyEntry
+            {
+                ItemId = itemId,
+                Name = ResolveItem(itemId).Name,
+                Count = inventory->GetItemCountInContainer(itemId, InventoryType.Currency),
+            });
+        }
+
+        return result;
+    }
+
+    // ---- Current location (v1.27.0) ----------------------------------------
+
+    /// <summary>
+    /// The current territory: its place name, and — while the
+    /// territory belongs to a duty — the content's name, both from
+    /// the TerritoryType sheet (PlaceName / ContentFinderCondition).
+    /// </summary>
+    private LocationData? BuildLocation()
+    {
+        var territoryId = ClientState.TerritoryType;
+        if (territoryId == 0)
+            return null;
+
+        var data = new LocationData { TerritoryId = territoryId };
+        var sheet = DataManager.GetExcelSheet<TerritoryType>();
+        if (sheet != null && sheet.TryGetRow(territoryId, out var row))
+        {
+            if (row.PlaceName.IsValid)
+                data.PlaceName = row.PlaceName.Value.Name.ExtractText();
+
+            var content = row.ContentFinderCondition;
+            if (content.IsValid && content.RowId != 0)
+            {
+                data.ContentId = (int)content.RowId;
+                data.ContentName = content.Value.Name.ExtractText();
+            }
+        }
+
+        return data;
+    }
+
+    // ---- Master recipe books (v1.27.0) --------------------------------------
+
+    /// <summary>
+    /// Master recipe book (SecretRecipeBook) unlock state for every
+    /// book in the sheet, read with PlayerState.IsSecretRecipeBookUnlocked
+    /// keyed by the sheet's row id. The book list is derived from game
+    /// data, so books added by future expansions are picked up
+    /// automatically.
+    /// </summary>
+    private unsafe List<MasterBookEntry>? BuildMasterBooks()
+    {
+        var playerState = PlayerState.Instance();
+        if (playerState == null)
+            return null;
+
+        var sheet = DataManager.GetExcelSheet<SecretRecipeBook>();
+        if (sheet == null)
+            return null;
+
+        var books = new List<MasterBookEntry>();
+        foreach (var row in sheet)
+        {
+            if (row.RowId == 0 || row.Item.RowId == 0)
+                continue;
+
+            books.Add(new MasterBookEntry
+            {
+                Id = (int)row.RowId,
+                Name = row.Name.ExtractText(),
+                ItemId = row.Item.RowId,
+                Unlocked = playerState->IsSecretRecipeBookUnlocked(row.RowId),
+            });
+        }
+
+        return books.Count == 0 ? null : books;
+    }
+
+    // ---- Trust members (v1.27.0) ----------------------------------------------
+
+    /// <summary>
+    /// Trust member levels from the Dawn agent's member data. The
+    /// agent only holds data after the game has loaded it (opening
+    /// the Trust window once is enough); until then this returns
+    /// null and the section is omitted. A member can appear several
+    /// times (one entry per job variant); the entry with the highest
+    /// level is kept per member name.
+    /// </summary>
+    private unsafe List<TrustMemberEntry>? BuildTrust()
+    {
+        var agentModule = AgentModule.Instance();
+        if (agentModule == null)
+            return null;
+
+        var agent = (AgentDawn*)agentModule->GetAgentByInternalId(AgentId.Dawn);
+        if (agent == null || agent->Data == null)
+            return null;
+
+        var memberData = &agent->Data->MemberData;
+        if (memberData->MemberEntriesCount == 0)
+            return null;
+
+        var byName = new Dictionary<string, TrustMemberEntry>();
+        for (var i = 0; i < 960; i++)
+        {
+            var entry = memberData->Members[i];
+            if (entry.Level == 0)
+                continue;
+
+            var name = entry.Name.ToString();
+            if (string.IsNullOrEmpty(name))
+                continue;
+
+            if (byName.TryGetValue(name, out var existing) && existing.Level >= entry.Level)
+                continue;
+
+            byName[name] = new TrustMemberEntry
+            {
+                MemberId = entry.MemberId,
+                Name = name,
+                ClassJobId = entry.ClassJob,
+                Level = entry.Level,
+                Exp = entry.Exp,
+                MaxExp = entry.MaxExp,
+            };
+        }
+
+        if (byName.Count == 0)
+            return null;
+
+        var members = byName.Values.ToList();
+        members.Sort((a, b) => string.Compare(a.Name, b.Name, StringComparison.Ordinal));
+        return members;
+    }
+
+    // ---- Beastmaster (v1.27.0) --------------------------------------------------
+
+    /// <summary>
+    /// Beastmaster progress from XBMManager (the beast/pet list
+    /// manager): how many beasts are unlocked, plus the per-beast
+    /// unlock flag for every row of the XBMPet sheet. Only read
+    /// once the manager reports its data as received; before that
+    /// the section is omitted.
+    /// </summary>
+    private unsafe BeastmasterData? BuildBeastmaster()
+    {
+        var manager = XBMManager.Instance();
+        if (manager == null)
+            return null;
+
+        if (manager->State != XBMManager.DataState.Received)
+            return null;
+
+        var data = new BeastmasterData { UnlockedCount = manager->NumUnlockedPets };
+        var sheet = DataManager.GetExcelSheet<XBMPet>();
+        if (sheet != null)
+        {
+            foreach (var row in sheet)
+            {
+                if (row.RowId == 0)
+                    continue;
+
+                // The XBMPet sheet carries no name column (the beast
+                // names live behind model/NPC links), so only the id
+                // and the unlock flag are exported; consumers resolve
+                // names from game data if they need them.
+                data.Pets.Add(new BeastmasterPetEntry
+                {
+                    PetId = (int)row.RowId,
+                    Name = null,
+                    Unlocked = manager->IsPetUnlocked(row.RowId),
+                });
+            }
+        }
+
+        return data;
     }
 
     // ---- Roulette completion (v1.14.0) ------------------------------------
@@ -4724,6 +4981,83 @@ public sealed class Plugin : IDalamudPlugin
         public OccultCrescentData? OccultCrescent { get; set; }
         public SquadronData? Squadron { get; set; }
         public List<FolkloreTomeEntry>? Folklore { get; set; }
+        public List<CurrencyEntry> Scrips { get; set; } = [];
+        public LocationData? Location { get; set; }
+        public List<MasterBookEntry>? MasterBooks { get; set; }
+        public List<TrustMemberEntry>? Trust { get; set; }
+        public BeastmasterData? Beastmaster { get; set; }
+    }
+
+    public sealed class LocationData
+    {
+        /// <summary>TerritoryType row id of the current area.</summary>
+        public uint TerritoryId { get; set; }
+
+        /// <summary>Area (place) name in the game client's language; null when it cannot be resolved.</summary>
+        public string? PlaceName { get; set; }
+
+        /// <summary>ContentFinderCondition row id when the current territory belongs to a duty; 0 otherwise.</summary>
+        public int ContentId { get; set; }
+
+        /// <summary>Duty/content name in the game client's language while inside a duty; null in the field.</summary>
+        public string? ContentName { get; set; }
+    }
+
+    public sealed class MasterBookEntry
+    {
+        /// <summary>SecretRecipeBook row id.</summary>
+        public int Id { get; set; }
+
+        /// <summary>Book name (e.g. 木工秘伝書:第3巻) in the game client's language.</summary>
+        public string Name { get; set; } = string.Empty;
+
+        /// <summary>The book item's row id.</summary>
+        public uint ItemId { get; set; }
+
+        /// <summary>True when the book has been obtained and read.</summary>
+        public bool Unlocked { get; set; }
+    }
+
+    public sealed class TrustMemberEntry
+    {
+        /// <summary>Dawn member id (the entry with the highest level is kept when a member has several job variants).</summary>
+        public int MemberId { get; set; }
+
+        /// <summary>Member name in the game client's language.</summary>
+        public string Name { get; set; } = string.Empty;
+
+        /// <summary>ClassJob row id of the kept variant.</summary>
+        public int ClassJobId { get; set; }
+
+        /// <summary>Trust level of the member.</summary>
+        public int Level { get; set; }
+
+        /// <summary>EXP accumulated inside the current level.</summary>
+        public uint Exp { get; set; }
+
+        /// <summary>EXP needed to leave the current level.</summary>
+        public uint MaxExp { get; set; }
+    }
+
+    public sealed class BeastmasterData
+    {
+        /// <summary>Number of unlocked beasts as reported by the game (XBMManager.NumUnlockedPets).</summary>
+        public int UnlockedCount { get; set; }
+
+        /// <summary>Per-beast unlock state for every row of the XBMPet sheet.</summary>
+        public List<BeastmasterPetEntry> Pets { get; set; } = [];
+    }
+
+    public sealed class BeastmasterPetEntry
+    {
+        /// <summary>XBMPet row id.</summary>
+        public int PetId { get; set; }
+
+        /// <summary>Beast name (the linked BNpcName) in the game client's language; null when it cannot be resolved.</summary>
+        public string? Name { get; set; }
+
+        /// <summary>True when the beast has been captured/unlocked.</summary>
+        public bool Unlocked { get; set; }
     }
 
     public sealed class FreeCompanyData

@@ -107,5 +107,20 @@ public sealed class Configuration : IPluginConfiguration
     /// <summary>Include folklore tome unlock state (every book across Miner, Botanist and Fisher, with its unlocked flag) in the snapshot (v1.26.0).</summary>
     public bool ExportFolklore { get; set; } = true;
 
+    /// <summary>Include crafter/gatherer scrip balances (white, purple and orange scrips, plus Skybuilders' scrips) in the snapshot (v1.27.0). Scrips are not part of the Currencies list: they are not stored as currency-container pseudo items, so they are read individually.</summary>
+    public bool ExportScrips { get; set; } = true;
+
+    /// <summary>Include the current location (area name, and the content name while inside a duty) in the snapshot (v1.27.0).</summary>
+    public bool ExportLocation { get; set; } = true;
+
+    /// <summary>Include master recipe book (secret recipe book) unlock state for every book in the snapshot (v1.27.0).</summary>
+    public bool ExportMasterBooks { get; set; } = true;
+
+    /// <summary>Include Trust member levels and EXP in the snapshot (v1.27.0). Read from the Trust window's agent data, so it is only available after that data has been loaded (e.g. after opening the Trust window once).</summary>
+    public bool ExportTrust { get; set; } = true;
+
+    /// <summary>Include Beastmaster progress (which beasts/pets have been unlocked) in the snapshot (v1.27.0).</summary>
+    public bool ExportBeastmaster { get; set; } = true;
+
     public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
 }

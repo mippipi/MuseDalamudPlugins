@@ -319,10 +319,14 @@ public sealed class ReportWindow : Window
             (L("FATE達成度", "Shared FATE Progress"), BuildFateLines(snapshot)),
             (L("バディ", "Buddy"), BuildBuddyLines(snapshot)),
             (L("週間トームストーン", "Weekly Tomestones"), BuildWeeklyTomestoneLines(snapshot)),
+            (L("スクリップ", "Scrips"), BuildScripLines(snapshot)),
             (L("リテイナー", "Retainers"), BuildRetainerLines(snapshot)),
             (L("冒険者小隊", "Adventurer Squadron"), BuildSquadronLines(snapshot)),
+            (L("フェイス", "Trust"), BuildTrustLines(snapshot)),
             (L("クレセントアイル", "Occult Crescent"), BuildOccultLines(snapshot)),
             (L("伝承録", "Folklore Tomes"), BuildFolkloreLines(snapshot)),
+            (L("秘伝書", "Master Recipe Books"), BuildMasterBookLines(snapshot)),
+            (L("魔獣使い", "Beastmaster"), BuildBeastmasterLines(snapshot)),
         };
     }
 
@@ -333,6 +337,13 @@ public sealed class ReportWindow : Window
             $"{snapshot.Character}（{snapshot.World}）",
             L($"現在のジョブ: {snapshot.CurrentJob ?? "-"}", $"Current job: {snapshot.CurrentJob ?? "-"}"),
         };
+        if (snapshot.Location?.PlaceName != null)
+        {
+            var location = snapshot.Location.ContentName != null
+                ? $"{snapshot.Location.PlaceName}（{snapshot.Location.ContentName}）"
+                : snapshot.Location.PlaceName;
+            lines.Add(L($"現在地: {location}", $"Location: {location}"));
+        }
         if (snapshot.FreeCompany?.Name != null)
             lines.Add($"FC: {snapshot.FreeCompany.Name} [{snapshot.FreeCompany.Tag}]");
         var gil = snapshot.Currencies.FirstOrDefault(c => c.ItemId == 1);
@@ -625,6 +636,77 @@ public sealed class ReportWindow : Window
         }
 
         return lines;
+    }
+
+    private List<string> BuildScripLines(Plugin.Snapshot snapshot)
+    {
+        if (snapshot.Scrips.Count == 0)
+            return NoData();
+        return snapshot.Scrips
+            .Select(s => $"{s.Name}: {Num(s.Count)}")
+            .ToList();
+    }
+
+    private List<string> BuildTrustLines(Plugin.Snapshot snapshot)
+    {
+        if (snapshot.Trust == null || snapshot.Trust.Count == 0)
+            return NoData();
+        return snapshot.Trust
+            .Select(m => $"{m.Name}: Lv{m.Level} (EXP {Num((int)m.Exp)} / {Num((int)m.MaxExp)})")
+            .ToList();
+    }
+
+    private List<string> BuildMasterBookLines(Plugin.Snapshot snapshot)
+    {
+        if (snapshot.MasterBooks == null || snapshot.MasterBooks.Count == 0)
+            return NoData();
+        var books = snapshot.MasterBooks;
+        var unlocked = books.Count(b => b.Unlocked);
+        var lines = new List<string>
+        {
+            L($"取得済み {unlocked} / {books.Count} 冊", $"{unlocked} / {books.Count} books obtained"),
+        };
+        var locked = books.Where(b => !b.Unlocked).Select(b => b.Name).ToList();
+        if (locked.Count == 0)
+        {
+            lines.Add(L("全て取得済みです", "All books obtained."));
+        }
+        else
+        {
+            lines.Add(L("未取得:", "Not obtained:"));
+            for (var i = 0; i < locked.Count; i += 2)
+                lines.Add(i + 1 < locked.Count ? $"{locked[i]} / {locked[i + 1]}" : locked[i]);
+        }
+
+        return lines;
+    }
+
+    private List<string> BuildBeastmasterLines(Plugin.Snapshot snapshot)
+    {
+        if (snapshot.Beastmaster == null || snapshot.Beastmaster.Pets.Count == 0)
+            return NoData();
+        var pets = snapshot.Beastmaster.Pets;
+        var lines = new List<string>
+        {
+            L($"解放済み {snapshot.Beastmaster.UnlockedCount} / {pets.Count}",
+              $"{snapshot.Beastmaster.UnlockedCount} / {pets.Count} beasts unlocked"),
+        };
+        for (var i = 0; i < pets.Count; i += 2)
+        {
+            var left = FormatBeastmasterPet(pets[i]);
+            var right = i + 1 < pets.Count ? FormatBeastmasterPet(pets[i + 1]) : null;
+            lines.Add(right == null ? left : $"{left} / {right}");
+        }
+
+        return lines;
+    }
+
+    private string FormatBeastmasterPet(Plugin.BeastmasterPetEntry pet)
+    {
+        var name = pet.Name ?? $"Pet {pet.PetId}";
+        return pet.Unlocked
+            ? name
+            : L($"{name}（未解放）", $"{name} (locked)");
     }
 
     private List<string> BuildFolkloreLines(Plugin.Snapshot snapshot)
